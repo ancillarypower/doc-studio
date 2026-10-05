@@ -1,0 +1,51 @@
+/* App-level keyframes and helper classes (moved verbatim from the artifact's inline <style>). */
+@keyframes sealTrimOut { 0%, 90% { opacity: 1; } 100% { opacity: 0; } }
+/* scissors ride the OUTER frame edge for half the perimeter: sweep the top edge,
+   dwell at the corner (random 1–3 s via animation delay), then finish down the right edge */
+@keyframes sealCutOrbitA { 0% { left: 0; top: 0; } 100% { left: 100%; top: 0; } }
+@keyframes sealCutOrbitB { 0% { left: 100%; top: 0; } 100% { left: 100%; top: 100%; } }
+/* the scissors keep repeating the 剪/開 motion while travelling along the edge */
+@keyframes scissSnipA { 0%, 100% { transform: rotate(-13deg); } 50% { transform: rotate(9deg); } }
+@keyframes scissSnipB { 0%, 100% { transform: rotate(13deg); } 50% { transform: rotate(-9deg); } }
+/* 剪刀跟著移動路徑轉向：到轉角時順時針轉 90°，沿右緣向下時刀口改朝下 */
+@keyframes scissorTurn { 0% { transform: rotate(0deg); } 100% { transform: rotate(90deg); } }
+/* 「產生用印 PDF」外框強調：下載鈕搶先被點時閃三下；產出後設定被改過則持續呼吸 */
+@keyframes genNudgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(190,58,43,0), 0 4px 16px rgba(190,58,43,0.35); }
+  50% { box-shadow: 0 0 0 7px rgba(190,58,43,0.38), 0 0 26px 6px rgba(190,58,43,0.3); }
+}
+/* 鉛字章 cinematic: one smooth glide in from a screen edge — a slight bank that
+   levels out as it settles, like a paper plane landing on the desk (no tumbling) */
+@keyframes yuxiFly {
+  0%   { transform: translate(var(--dx), var(--dy)) rotate(calc(13deg * var(--spin))) scale(.6); opacity: 0; }
+  10%  { opacity: 1; }
+  45%  { transform: translate(calc(var(--dx) * .5), calc(var(--dy) * .54)) rotate(calc(8deg * var(--spin))) scale(.82); }
+  78%  { transform: translate(calc(var(--dx) * .16), calc(var(--dy) * .18)) rotate(calc(2.5deg * var(--spin))) scale(.96); }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+}
+/* the released seal flies itself away: a small hop, then a tumbling exit through a random edge */
+@keyframes yuxiFlyOut {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; }
+  16%  { transform: translate(calc(var(--ex) * .05), calc(var(--ey) * .05 - 3.5vh)) rotate(calc(80deg * var(--spin))) scale(1.05); opacity: 1; }
+  55%  { transform: translate(calc(var(--ex) * .5), calc(var(--ey) * .52 + 2vh)) rotate(calc(300deg * var(--spin))) scale(.84); opacity: 1; }
+  82%  { opacity: .9; }
+  100% { transform: translate(var(--ex), var(--ey)) rotate(calc(660deg * var(--spin))) scale(.52); opacity: 0; }
+}
+/* red imprint flash where the seal lands */
+@keyframes yuxiImprint {
+  0%   { transform: translate(-50%,-30%) scale(1.55); opacity: 0; }
+  22%  { transform: translate(-50%,-30%) scale(1); opacity: .92; }
+  68%  { opacity: .85; }
+  100% { transform: translate(-50%,-30%) scale(.98); opacity: 0; }
+}
+/* whole app defocuses while the 玉璽 cinematic plays (the overlay sits outside this wrapper) */
+.yuxi-defocus { filter: blur(9px) saturate(.94); }
+/* 頁面列橫向捲軸：細到幾乎隱形，軌道底色與整頁背景一致 */
+.diag-scroll { scrollbar-width: thin; scrollbar-color: rgba(163,144,111,.35) #F5F0E6; }
+.diag-scroll::-webkit-scrollbar { height: 5px; }
+.diag-scroll::-webkit-scrollbar-track { background: #F5F0E6; }
+.diag-scroll::-webkit-scrollbar-thumb { background: rgba(163,144,111,.35); border-radius: 3px; }
+.diag-scroll::-webkit-scrollbar-thumb:hover { background: rgba(163,144,111,.6); }
+/* uploaded file name stays blurred until hovered (shoulder-surfing guard) */
+.pdfname-blur { filter: blur(5px); transition: filter .18s ease; }
+.pdfname-blur:hover { filter: blur(0); }

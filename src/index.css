@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+/* ---- Tailwind v3 parity (the artifact runtime used Tailwind 3.4) ----
+   v4 changed a few defaults; these restore the v3 look so phase A renders like the original. */
+@layer base {
+  /* artifact runtime shell: #root is the scroll container */
+  html, body { height: 100%; }
+  body { margin: 0; }
+  #root { height: 100dvh; overflow: auto; }
+  *, ::after, ::before, ::backdrop, ::file-selector-button { border-color: #e5e7eb; }
+  input::placeholder, textarea::placeholder { color: #9ca3af; opacity: 1; }
+  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+}
+@theme {
+  --default-ring-width: 3px;
+  --default-ring-color: rgb(59 130 246 / 0.5);
+}
