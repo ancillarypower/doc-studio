@@ -1,0 +1,217 @@
+// 騎縫章工作室 Seal PDF Studio
+// Subject: cross-page document sealing (騎縫章) for TW business PDFs, fully in-browser.
+// Design: 印泥 vermillion on warm paper; Noto Serif TC display; the signature element is a
+// live reconstruction diagram — the user's actual seal, rotated and split across page edges,
+// with a 併攏 toggle that slides pages together to prove reconstruction.
+// v26: 衝突警示移至預覽右側並改警示黃色系；每片寬取消上限；捌區副標移除、紀錄字體比照整頁；
+//      未產生前點下載鈕讓「產生用印 PDF」外框閃爍強調；產出後改設定按鈕持續強調需重新用印；
+//      剪刀轉角跟著轉向；JPG 印章自動去白底（去背）；方法卡勾勾移至卡片右上並放大。
+// v27: PDF 統一只在壹區上傳（頁面其他地方拖放不會讓瀏覽器直接開檔；丟進印章框的 PDF 自動改走
+//      PDF 上傳）；貳區新增「移除密碼後加印騎縫章或浮水印」與「移除權限控制（owner password
+//      only）」兩個選項（預設勾選）。加密 PDF 由 src/pdf/crypt.js 解密（RC4 40/128、AES-128、
+//      AES-256 R5/R6）並整份重寫成未加密檔，再回流壹區當成一般上傳；需要開啟密碼時在壹區卡片
+//      上就地輸入。取消勾選會卸下已解密的文件，重新勾選再回流。
+// v28: 壹、貳之間新增「貳 移除密碼」章節，加密文件兩個選項從用印方式區移入；後續章節順延為參–玖。
+// v29: 貳區比照其他章節：PDF 上傳前淡化、不可點擊（加密 PDF 待解鎖時仍可操作）；外層改用同款米色卡片。
+// v30: 解除密碼改用按鈕 onClick + Enter 直接觸發（不再依賴 <form> submit，沙盒 iframe 會擋表單送出）。
+// v31: 參區方法卡再點一次已選取的方法即取消選取（回到未選狀態）；選取勾勾移到說明文字下方、
+//      文字欄右端（卡片中間偏左），不再被示意圖蓋住、也不遮蔽文字。
+// v32: 貳區改為解密後才啟用（未解密前淡化、不可點擊），解密後新增「下載解密後 PDF」按鈕；
+//      壹、捌兩區預設收合；捌區只要壹區有 PDF 就可操作：未備齊印章/方式時直接輸出
+//      （套用壓縮／灰階／重新命名，不用印），上傳 PDF 時捌區自動展開。
+// v33: 預設只展開壹、捌兩區，貳參肆伍陸柒玖收合；上傳 PDF 後參–玖全部展開（貳區於解密版本時展開），
+//      卸下 PDF 回到上傳前的收合狀態。
+// v34: 玖區處理紀錄永遠收合，只在出現錯誤／失敗時自動展開；右上角新增「下載紀錄」(.txt)。
+//      捌區壓縮新增「依目標大小」模式（輸入 MB，自動搜尋圖片品質、必要時降解析度以壓到目標內）。
+//      參區側邊裝訂示意切片固定 5px 寬、切片數增加；貳區「下載解密後 PDF」改置中大長條按鈕，
+//      移除「已解密，可直接下載未加密的原文件。」說明。
+// v35: 捌區「壓縮率」模式移除 sr-only 標籤（在 zoom 1.25 下被定位到頁面最底、多撐出一條直向捲軸），
+//      改用 aria-label；「目標大小」可切換 MB / KB 單位；貳區「下載解密後 PDF」右側新增灰色
+//      「下載解密前 PDF」按鈕（原始加密檔）。
+// v36: 下載紀錄 (.txt) 表頭與檔名加入 artifact 版本號（APP_VERSION，每次存版記得同步 +1）。
+// v37: 版本號只寫在紀錄內容表頭（「版本：vN」），檔名恢復為 處理紀錄_YYYYMMDDTHHmmss.txt。
+// v38: 壹區之後新增「貳 檔案狀態」：上傳時掃描（src/pdf/sanitize.js）中繼資料、增量舊版本／未引用
+//      物件、JavaScript 與自動動作、附件／作品集、連結、PieceInfo／書籤、JPEG EXIF（含 GPS）、
+//      註解表單、隱藏圖層、隱形文字、數位簽章、同色／被蓋住的文字，只列出偵測到的項目。
+//      勾選的淨化在產出時套用（壓縮／灰階之後、用印之前），整份重寫只保留追得到的物件；
+//      發現 JavaScript／附件／Launch 時顯示警示並預設勾選。後續章節順延為參–拾。
+// v12: method cards ordered A, C, B with letter labels hidden;
+//      page-number font default 12 pt; strip width default 2.0 mm.
+// v25: 移除併攏說明文字；每片寬輸入框加寬三倍；頁尾聲明移入柒區（取代「原檔不會被修改」）、
+//      頁尾移除；處理紀錄升格為捌區（章節式收合）；表頭副標移除英文；下載按鈕停用時字色
+//      改黑；四區「恢復預設」字體放大、點後變「恢復自訂」可還原點擊前的自訂值；裁邊剪刀
+//      改 SVG 雙刃並持續剪開；收合箭頭改 SVG 三角貼齊盒底；灰階印章設定移至第二行。
+// v24: 方法卡文字欄限寬半幅、示意圖流體放大佔滿右半；裁邊剪刀改沿外框邊走半圈
+//      （上緣→右緣）；「全文件轉灰階」更名「全文件轉黑白（灰階）」；移除陸區副標題
+//      「淡色文字覆於每頁中央」；章節收合箭頭 ▾ 放大三倍。
+// v13: live seal thumbnails on each method card (horizontal halves / vertical halves /
+//      strips cut to slice width); scissor-cut transition when blank margins are auto-trimmed;
+//      PDF file-size chip; wider 併攏驗證 button; hover expand/collapse handles on every page
+//      boundary + off-by-one page-label fix in the diagram; seal fade (淡化) slider;
+//      左下斜角 / 右下斜角 page-number corner presets.
+// v14: boundary handles widen the page gap on both sides while hovered; 灰階印章 pinned to
+//      淡化's left as one wrap-proof unit; output options row (壓縮檔案 + 檔案壓縮率,
+//      全文件轉灰階, 重新命名檔案) backed by a full-rewrite post-processor (color-op rewrite,
+//      image graying, JPEG re-encode, incremental-tail compaction); generate/download buttons
+//      side by side.
+// v22: 移除右側「現況彙整」浮動面板；上傳卡恢復檔名文字列（常態模糊、懸停顯示）；
+//      預覽不再因頁數自動收合（全頁展開，頁緣收合把手與 … 按鈕一併移除）；
+//      下載按鈕與結果卡不再顯示檔名（結果卡「用印完成」標題列一併移除）；
+//      亂碼檔名修復前先做 NFC 正規化（macOS NFD 組合字元不再跳過修復）。
+// v21: 全部展開/收合標示放大至略小於章節標題；頁面列橫向捲軸幾乎隱形（軌道同色於頁面背景）；
+//      移除長文件「▴ 收合」按鈕（頁緣把手仍可收合）；玉璽改為活字印刷鉛字章、進場改滑翔降落；
+//      上傳卡移除檔名文字列；亂碼檔名自動嘗試 Big5/GBK/UTF-8 修復顯示（含重新命名預設值）；
+//      表頭副標題更新；印章縮圖加寬兩倍 (w-20→w-40)；側邊裝訂卡欄寬縮窄；表頭容器寬度對齊內容區。
+// v20: 現況彙整面板按住標題列即可拖曳；側邊裝訂按併攏驗證時先自動攤開全部頁面再併攏；
+//      移除頁面列鏈條捲軸；全站字體依長者友善標準放大（zoom 1.25，浮動面板除外）、版面
+//      不再為面板留白而真正置中；玉璽印面無字、改蓋隨機曼陀羅圖騰；剪刀放慢並於轉角隨機
+//      停留 1–3 秒、剪刀放大；章節中文數字放大；陸區更名「設計浮水印」、參區更名「預覽」；
+//      柒區補上恢復預設；點擊任一頁可放大閱讀（高解析渲染、‹ › 換頁、Esc 關閉）。
+// v19: 玉璽蓋完章後自己隨機飛走（不再熔融）；各章節標題可點擊收合；側邊裝訂的併攏驗證
+//      改為整疊互疊、每頁只露出右緣切片；右側新增常駐「現況彙整」浮動面板（肆/伍/柒區
+//      狀態文字移入）；伍與產出之間新增陸區「浮水印」（文字/顏色/字號/淡化/角度/鋪滿，
+//      以半透明圖層嵌入每頁）；產出與下載遞為柒區；方法卡勾勾放大 30%；移除頁面列收合
+//      說明文字；頁面列橫向捲軸改鏈條造型。
+// v18: 玉璽去字更立體並放大、過場期間全背景失焦模糊；移除 PDF 頁面尺寸 chip；印章 chip
+//      只顯示像素；方法 A 正名「摺頁橫蓋法」；頁碼標記改紅線；肆區最右新增恢復預設；
+//      PDF 檔名常態模糊、懸停顯示；PDF 圖示放大；側邊裝訂卡切片圖示放大；頁緣把手改
+//      純 transform，解決懸停抖動。
+// v17: 標題改「印・章工廠」；方法卡示意圖 96×68 → 120×85 等比放大；印章縮圖加寬 (w-14→w-20)；
+//      產生用印 PDF 觸發傳國玉璽過場動畫（邊緣亂飛→玉手抓住→正中蓋下→手淡出→頂部熔融 2–5s）；
+//      伍區右上新增「恢復預設」；移除伍區預覽文字與方法卡尺寸 chip；橫蓋卡說明限寬 10em 兩行。
+// v16: 標題改「印・章工作室」；壹/貳/肆區標題改為 上傳文件與騎縫章 / 選擇騎縫章用印方式 /
+//      編輯騎縫章格式；「檔案不會上傳到任何伺服器」移至表頭副標題；配置預覽副標題移除；
+//      側邊裝訂卡說明限寬 10em 剛好兩行；印章卡顯示圖片檔案容量；剪刀放大並環繞圖片半圈
+//      （上緣→右緣）；配置預覽左上角頁碼放大。
+// v15: corner presets flipped — 左下斜角 −45° / 右下斜角 +45°（右下正值改為貼齊右緣的
+//      對稱調整）；method 卡示意圖放大為 96×68，文字欄讓位；配置預覽改顯示真實頁面縮圖，
+//      由內建迷你 rasterizer（src/pdf/render.js：向量路徑 / 色彩 / 圖片含 SMask / Form
+//      XObject；文字以定位色條呈現）逐頁背景渲染，失敗頁保留佔位卡。
+// v11: preview section moved between 貳 and 參, sections renumbered 壹–陸;
+//      method A renamed 摺頁橫蓋 + new method C 摺頁直蓋法 (90° pre-rotation);
+//      章數 (1–5 seals per pair / strips per doc); page-number size / bottom offset / rotation;
+//      generate button split into own section 陸 with a big gated green download button.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DropZone from "./components/DropZone.jsx";
+import Diagram from "./components/Diagram.jsx";
+import { PdfDoc, PdfError, deflate } from "./pdf/pdf.js";
+import { createRenderer } from "./pdf/render.js";
+import { buildLabels, generateSealedPdf, LABEL_SIZE } from "./seal/generate.js";
+import { labelText, textWidth, LABEL_ASCENT, LABEL_DESCENT } from "./pdf/font.js";
+import { MM, planPlacement, mulberry32, labelX } from "./seal/plan.js";
+import { postprocessPdf } from "./pdf/postprocess.js";
+import { probeEncryption, decryptPdf } from "./pdf/crypt.js";
+import { scanPdf, sanitizePdf } from "./pdf/sanitize.js";
+import ScanPanel, { SAN_DEFAULT, sanDefaultsFor, sanActive, sanSummary } from "./components/ScanPanel.jsx";
+import {
+  loadSealCanvas, trimBlankMargins, rotateSeal, rotateQuarter, splitVertical,
+  halfBoundaries, sliceBoundaries, inkCoverage, canvasToPdfImage, toGrayscale, applyOpacity,
+  whiteToAlpha, hasTransparency,
+} from "./seal/image.js";
+
+const VERM = "#BE3A2B";
+const INK = "#2A231A";
+const MUTED = "#6E6250";
+const PAPER = "#F5F0E6";
+const CARD = "#FBF8F1";
+const LINE = "#E3D9C6";
+const GREEN = "#2A6B3A";
+
+const MAX_PAGES = 300;
+// artifact 版本號：寫入下載紀錄表頭與檔名；每次 artifact save 前同步更新
+const APP_VERSION = 38;
+
+const ALIGN_LABELS = { left: "靠左", "center-left": "中間靠左", center: "置中", "center-right": "中間靠右", right: "靠右" };
+const METHOD_NAMES = { A: "摺頁橫蓋法", B: "側邊裝訂蓋章法", C: "摺頁直蓋法" };
+const METHOD_SHORT = { A: "摺頁橫蓋法", B: "側邊裝訂", C: "摺頁直蓋" };
+const clampRot = (v, fallback) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(-45, Math.min(45, n));
+};
+const clampNum = (v, lo, hi, fallback) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
+};
+
+// 目標大小：數值 + 單位 → bytes；各單位的合理範圍與預設值
+const UNIT_BYTES = { MB: 1048576, KB: 1024 };
+const TARGET_RANGE = { MB: [0.05, 2000, 2], KB: [50, 2048000, 2048] };
+const clampTarget = (v, unit) => { const [lo, hi, d] = TARGET_RANGE[unit] || TARGET_RANGE.MB; return clampNum(v, lo, hi, d); };
+const fmtTarget = (v, unit) => `${clampTarget(v, unit)} ${unit}`;
+
+function bytesToB64(bytes) {
+  let s = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) s += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(s);
+}
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+const fmtBytes = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+
+// Shared seal pipeline: trim blank margins → downscale for speed → 去背 (a flat white
+// background becomes transparent when the image carries no alpha of its own, e.g. JPG),
+// so every place the seal shows — thumbnail, method cards, preview halves, the PDF itself —
+// renders the background-removed image.
+function prepSealCanvas(raw) {
+  const trimmed = trimBlankMargins(raw);
+  let canvas = trimmed.canvas;
+  let downscaled = false;
+  const MAXDIM = 640;
+  if (canvas.width > MAXDIM || canvas.height > MAXDIM) {
+    const k = MAXDIM / Math.max(canvas.width, canvas.height);
+    const c = document.createElement("canvas");
+    c.width = Math.round(canvas.width * k); c.height = Math.round(canvas.height * k);
+    c.getContext("2d").drawImage(canvas, 0, 0, c.width, c.height);
+    canvas = c; downscaled = true;
+  }
+  let bgRemoved = false;
+  if (!hasTransparency(canvas)) { canvas = whiteToAlpha(canvas); bgRemoved = true; }
+  return { canvas, trimmed, downscaled, bgRemoved };
+}
+// strip characters no filesystem wants, and trailing/leading dots/spaces
+const sanitizeBase = (s) => (s || "").replace(/[\\/:*?"<>|\x00-\u001F]/g, "").replace(/^[\s.]+|[\s.]+$/g, "");
+
+// Legacy-encoded filenames (Big5/GBK/UTF-8 bytes misread as Latin-1) surface as mojibake.
+// Re-encode the string back to bytes and try decoders: a clean UTF-8 decode with real CJK
+// wins outright (modern systems; its GBK misread would score more glyphs but is wrong),
+// otherwise the legacy CJK decode with the best score: CJK glyphs earn, replacement
+// chars pay (a truncated byte pair right before ".pdf" must not sink a good decode).
+function repairMojibake(name) {
+  if (!name) return name;
+  name = name.normalize("NFC"); // macOS NFD decomposes accented mojibake into base + combining marks (> 0xFF) — compose first
+  let suspect = 0;
+  for (const ch of name) {
+    const c = ch.codePointAt(0);
+    if (c > 0xff) return name; // already real Unicode (e.g. CJK) — nothing to repair
+    if (c >= 0x80) suspect++;
+  }
+  if (suspect < 2) return name; // plain ASCII: fine already
+  const bytes = new Uint8Array([...name].map((ch) => ch.charCodeAt(0)));
+  const score = (t) => {
+    let cjk = 0, bad = 0;
+    for (const ch of t) { const c = ch.codePointAt(0); if (c >= 0x3400 && c <= 0x9fff) cjk++; else if (c === 0xfffd) bad++; }
+    return cjk * 2 - bad * 5;
+  };
+  try {
+    const t = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    if (!t.includes("�") && score(t) >= 4) return t; // clean UTF-8 with 2+ CJK glyphs
+  } catch { /* decoder unavailable */ }
+  let best = null, bestScore = 3; // threshold: 2 clean CJK glyphs, so "résumé.pdf" stays put
+  for (const enc of ["big5", "gb18030"]) {
+    try {
+      const t = new TextDecoder(enc, { fatal: false }).decode(bytes);
+      const sc = score(t);
+      if (sc > bestScore) { best = t; bestScore = sc; }
+    } catch { /* decoder unavailable in this browser */ }
+  }
+  if (best) return best.replace(/�+$/g, ""); // drop a dangling truncated pair at the tail
+  return name; // no confident repair: keep the original string
+}
+
