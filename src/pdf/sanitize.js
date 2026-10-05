@@ -68,11 +68,11 @@ export function pdfText(v) {
   const b = stringBytes(v);
   if (b[0] === 0xfe && b[1] === 0xff) {
     let s = ""; for (let i = 2; i + 1 < b.length; i += 2) s += String.fromCharCode((b[i] << 8) | b[i + 1]);
-    return s.replace(//g, "");
+    return s.replace(/\/g, "");
   }
   if (b[0] === 0xff && b[1] === 0xfe) {
     let s = ""; for (let i = 2; i + 1 < b.length; i += 2) s += String.fromCharCode(b[i] | (b[i + 1] << 8));
-    return s.replace(//g, "");
+    return s.replace(/\/g, "");
   }
   const body = b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf ? b.subarray(3) : b;
   try { return new TextDecoder("utf-8", { fatal: true }).decode(body); } catch { return lat1(body); }
