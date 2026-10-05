@@ -3,7 +3,7 @@
 // React 18.2, and the compiled stylesheet captured from the runtime build (artifact.css).
 // Output: reference/build/index.html (+ app.js), served by CI next to the new build.
 import { build } from "esbuild";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +17,19 @@ await build({
   define: { "process.env.NODE_ENV": '"production"' },
   outfile: join(out, "app.js"), logLevel: "info",
   plugins: [{
+    // App.jsx (142 KB) is stored as ordered line-boundary chunks in App.jsx.parts/ so each one fits
+    // a single commit through the GitHub API; concatenated they are the exact original file.
+    name: "app-parts",
+    setup(b) {
+      const partsDir = join(here, "artifact", "src", "App.jsx.parts");
+      b.onResolve({ filter: /\/artifact\/src\/App\.jsx$/ }, () => ({ path: join(here, "artifact", "src", "App.jsx"), namespace: "app-parts" }));
+      b.onLoad({ filter: /.*/, namespace: "app-parts" }, () => ({
+        contents: readdirSync(partsDir).filter((f) => f.endsWith(".part")).sort()
+          .map((f) => readFileSync(join(partsDir, f), "utf8")).join(""),
+        loader: "jsx", resolveDir: join(here, "artifact", "src"),
+      }));
+    },
+  }, {
     // The artifact's PDF / seal engines are byte-identical to src/pdf and src/seal (the port does not
     // touch them), so the reference build reads them from there instead of keeping a second copy.
     name: "shared-engines",
