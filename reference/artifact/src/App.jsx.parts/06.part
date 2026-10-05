@@ -1,0 +1,265 @@
+        onProgress: (i, n) => setBusy(`寫入 PDF 頁面… ${i}/${n}`),
+      });
+      const blob = new Blob([res.bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const name = finalFileName;
+      setResult({
+        url, name, size: res.bytes.length,
+        report: {
+          verified: res.verified, count: res.pageCount,
+          method, align, lang, seed,
+          grayscale, sealOpacity, rotMin: rLo, rotMax: rHi,
+          sealCount, labelSize, labelBottom, labelRot,
+          blanks: plan.blanks, blankOK,
+          conflicts: plan.conflicts, skipped: skipConflicts,
+          wm: wmOn && wmText.trim() ? { text: wmText.trim(), size: wmSize, opacity: wmOpacity, angle: wmAngle, color: wmColor, tile: wmTile } : null,
+          grayDoc, compressQ: compressPdf && ppStats ? ppRes.q : 0, compressDesc: compressPdf && ppStats ? compressLabel(ppRes) : "",
+          srcSize: pdfInfo.bytes.length, baseSize: srcBytes.length,
+          sanDesc: sanRes ? sanRes.desc : "", sigWarn: !!(scan?.report?.sig.detected),
+          sealInfo: seal.info,
+          dpi: Math.round(((method === "C" ? seal.canvas.height : seal.canvas.width) / (sealWmm / 25.4)) || 0),
+        },
+      });
+      setStale(false);
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+      addLog(`寫入完成：${res.pageCount} 頁覆蓋 · 頁數核對 ${res.verified ? "✓ 通過" : "✗ 不符"}`);
+      addLog(`產生完成：${name}（${fmtBytes(res.bytes.length)}）· 耗時 ${elapsed} 秒 · 頁碼 ${lang === "tc" ? "繁中" : "EN"}/${ALIGN_LABELS[align]}`);
+      if (ppRes && ppRes.target && res.bytes.length > ppRes.target) addLog(`注意：用印後檔案 ${fmtBytes(res.bytes.length)} 仍超過目標 ${fmtBytes(ppRes.target)}`);
+      window.__sealOutB64 = bytesToB64(res.bytes);
+      setBusy(null);
+    } catch (e) {
+      setBusy(null);
+      setError("產生失敗：" + (e.message || e));
+      addLog("產生失敗：" + (e.message || e));
+    }
+  }
+
+  // 不用印輸出：只套用捌區的壓縮／灰階／重新命名
+  async function generatePlain() {
+    const t0 = performance.now();
+    addLog(`開始產生（不用印）${sanActive(san) ? " · 淨化" : ""}${grayDoc ? " · 全文件灰階" : ""}${compressPdf ? (compressMode === "size" ? ` · 壓縮至 ${fmtTarget(targetMB, targetUnit)}` : ` · 壓縮 ${clampNum(compressQuality, 10, 100, 80)}%`) : ""}`);
+    setBusy("準備輸出…"); setError(null);
+    try {
+      let outBytes = pdfInfo.bytes;
+      let compressQ = 0;
+      let compressDesc = "";
+      if (grayDoc || compressPdf) {
+        setBusy("文件後製處理…");
+        const pp = await runPostprocess(0);
+        if (pp) {
+          outBytes = pp.bytes;
+          compressQ = compressPdf ? pp.q : 0;
+          compressDesc = compressPdf ? compressLabel(pp) : "";
+        }
+      }
+      const sanRes = await runSanitize(outBytes);
+      if (sanRes) outBytes = sanRes.bytes;
+      let count = pdfInfo.count;
+      try { count = (await (await PdfDoc.load(outBytes)).getPageRefs()).length; } catch { count = -1; }
+      const url = URL.createObjectURL(new Blob([outBytes], { type: "application/pdf" }));
+      setResult({
+        url, name: finalFileName, size: outBytes.length,
+        report: { plain: true, verified: count === pdfInfo.count, count, grayDoc, compressQ, compressDesc, srcSize: pdfInfo.bytes.length, unlock: pdfInfo.unlock || null, sanDesc: sanRes ? sanRes.desc : "" },
+      });
+      setStale(false);
+      addLog(`產生完成（不用印）：${finalFileName}（${fmtBytes(outBytes.length)}）· 耗時 ${((performance.now() - t0) / 1000).toFixed(1)} 秒`);
+      setBusy(null);
+    } catch (e) {
+      setBusy(null);
+      setError("產生失敗：" + (e.message || e));
+      addLog("產生失敗：" + (e.message || e));
+    }
+  }
+
+  // hidden E2E hook (used by automated tests)
+  useEffect(() => {
+    window.__sealTest = async (pdfB64, pngB64, opts = {}) => {
+      const bytes = b64ToBytes(pdfB64);
+      const doc = await PdfDoc.load(bytes);
+      const pageRefs = await doc.getPageRefs();
+      const pages = pageRefs.map((p) => {
+        const [x0, y0, x1, y1] = p.box;
+        const w = x1 - x0, h = y1 - y0;
+        return p.rotate % 180 === 0 ? { w, h, rotate: p.rotate } : { w: h, h: w, rotate: p.rotate };
+      });
+      setPdfInfo({ name: "e2e.pdf", bytes, pages, count: pages.length, tally: [], rotatedCount: 0 });
+      const img = new Image();
+      img.src = "data:image/png;base64," + pngB64;
+      await img.decode();
+      const c = document.createElement("canvas");
+      c.width = img.width; c.height = img.height;
+      c.getContext("2d").drawImage(img, 0, 0);
+      if (opts.realSeal) {
+        const { canvas, trimmed, downscaled, bgRemoved } = prepSealCanvas(c);
+        setSeal({ canvas, url: canvas.toDataURL(), info: { w: canvas.width, h: canvas.height, trimmed: trimmed.trimmed, origW: trimmed.origW, origH: trimmed.origH, downscaled, bgRemoved } });
+      } else {
+        setSeal({ canvas: c, url: c.toDataURL(), info: { w: c.width, h: c.height } });
+      }
+      if (opts.method) setMethod(opts.method);
+      if (opts.align) setAlign(opts.align);
+      if (opts.lang) setLang(opts.lang);
+      if (opts.seed !== undefined) setSeed(opts.seed);
+      if (opts.grayscale !== undefined) setGrayscale(opts.grayscale);
+      if (opts.sealOpacity !== undefined) setSealOpacity(opts.sealOpacity);
+      if (opts.rotMin !== undefined) setRotMin(opts.rotMin);
+      if (opts.rotMax !== undefined) setRotMax(opts.rotMax);
+      if (opts.sealCount !== undefined) setSealCount(opts.sealCount);
+      if (opts.labelSize !== undefined) setLabelSize(opts.labelSize);
+      if (opts.labelBottom !== undefined) setLabelBottom(opts.labelBottom);
+      if (opts.labelRot !== undefined) setLabelRot(opts.labelRot);
+      if (opts.grayDoc !== undefined) setGrayDoc(opts.grayDoc);
+      if (opts.compressPdf !== undefined) setCompressPdf(opts.compressPdf);
+      if (opts.compressQuality !== undefined) setCompressQuality(opts.compressQuality);
+      if (opts.compressMode !== undefined) setCompressMode(opts.compressMode);
+      if (opts.targetMB !== undefined) setTargetMB(opts.targetMB);
+      if (opts.targetUnit !== undefined) setTargetUnit(opts.targetUnit);
+      if (opts.outName !== undefined) setOutName(opts.outName);
+      if (opts.wmOn !== undefined) setWmOn(opts.wmOn);
+      if (opts.wmText !== undefined) setWmText(opts.wmText);
+      if (opts.wmSize !== undefined) setWmSize(opts.wmSize);
+      if (opts.wmOpacity !== undefined) setWmOpacity(opts.wmOpacity);
+      if (opts.wmAngle !== undefined) setWmAngle(opts.wmAngle);
+      if (opts.wmColor !== undefined) setWmColor(opts.wmColor);
+      if (opts.wmTile !== undefined) setWmTile(opts.wmTile);
+      return true;
+    };
+    // structural check of the generated output: page count, leftover color ops, image color spaces
+    window.__sealInspect = async () => {
+      if (!window.__sealOutB64) return null;
+      const bytes = b64ToBytes(window.__sealOutB64);
+      const doc = await PdfDoc.load(bytes);
+      const pageRefs = await doc.getPageRefs();
+      const lat1 = (b) => { let s = ""; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return s; };
+      let colorOps = 0, grayOps = 0;
+      const images = [];
+      for (const [num, entry] of doc.xref.entries()) {
+        if (entry.type !== 1 && entry.type !== 2) continue;
+        let v;
+        try { v = await doc.getObject(num); } catch { continue; }
+        if (!v || !v.$stream) continue;
+        if (v.dict["/Subtype"] === "/Image") {
+          let cs = v.dict["/ColorSpace"];
+          try { cs = await doc.resolve(cs); } catch { /* keep raw */ }
+          images.push({ num, filter: String(v.dict["/Filter"]), cs: Array.isArray(cs) ? cs[0] : String(cs), bytes: v.data.length });
+        } else if (v.dict["/Subtype"] === "/Form" || v.dict["/Length"] !== undefined) {
+          let f = v.dict["/Filter"];
+          if (Array.isArray(f)) f = f[0];
+          if (f === "/FlateDecode") {
+            try {
+              const t = lat1(await doc.decodeStream(v));
+              const colr = t.match(/[\d.\-]+ [\d.\-]+ [\d.\-]+ (rg|RG)\b|[\d.\-]+ [\d.\-]+ [\d.\-]+ [\d.\-]+ (k|K)\b/g);
+              const gray = t.match(/[\d.\-]+ (g|G)\b/g);
+              if (colr) colorOps += colr.length;
+              if (gray) grayOps += gray.length;
+            } catch { /* not decodable */ }
+          }
+        }
+      }
+      return { pages: pageRefs.length, size: bytes.length, colorOps, grayOps, images };
+    };
+    window.__sealState = () => ({
+      pdf: !!pdfInfo, seal: !!seal, method, plan: !!plan,
+      conflicts: plan?.conflicts ?? null, blanks: plan?.blanks ?? null,
+      ready, canGenerate, result: !!result, error,
+    });
+    window.__sealGenerate = async () => { await generate(); return window.__sealState(); };
+  });
+
+  // ---------- render ----------
+  return (
+    <main className="min-h-screen bg-[#F5F0E6] text-[#2A231A]" style={{ fontFamily: "'Noto Sans TC', system-ui, sans-serif" }}>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;900&family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+      <style>{`
+        @keyframes sealTrimOut { 0%, 90% { opacity: 1; } 100% { opacity: 0; } }
+        /* scissors ride the OUTER frame edge for half the perimeter: sweep the top edge,
+           dwell at the corner (random 1–3 s via animation delay), then finish down the right edge */
+        @keyframes sealCutOrbitA { 0% { left: 0; top: 0; } 100% { left: 100%; top: 0; } }
+        @keyframes sealCutOrbitB { 0% { left: 100%; top: 0; } 100% { left: 100%; top: 100%; } }
+        /* the scissors keep repeating the 剪/開 motion while travelling along the edge */
+        @keyframes scissSnipA { 0%, 100% { transform: rotate(-13deg); } 50% { transform: rotate(9deg); } }
+        @keyframes scissSnipB { 0%, 100% { transform: rotate(13deg); } 50% { transform: rotate(-9deg); } }
+        /* 剪刀跟著移動路徑轉向：到轉角時順時針轉 90°，沿右緣向下時刀口改朝下 */
+        @keyframes scissorTurn { 0% { transform: rotate(0deg); } 100% { transform: rotate(90deg); } }
+        /* 「產生用印 PDF」外框強調：下載鈕搶先被點時閃三下；產出後設定被改過則持續呼吸 */
+        @keyframes genNudgePulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(190,58,43,0), 0 4px 16px rgba(190,58,43,0.35); }
+          50% { box-shadow: 0 0 0 7px rgba(190,58,43,0.38), 0 0 26px 6px rgba(190,58,43,0.3); }
+        }
+        /* 鉛字章 cinematic: one smooth glide in from a screen edge — a slight bank that
+           levels out as it settles, like a paper plane landing on the desk (no tumbling) */
+        @keyframes yuxiFly {
+          0%   { transform: translate(var(--dx), var(--dy)) rotate(calc(13deg * var(--spin))) scale(.6); opacity: 0; }
+          10%  { opacity: 1; }
+          45%  { transform: translate(calc(var(--dx) * .5), calc(var(--dy) * .54)) rotate(calc(8deg * var(--spin))) scale(.82); }
+          78%  { transform: translate(calc(var(--dx) * .16), calc(var(--dy) * .18)) rotate(calc(2.5deg * var(--spin))) scale(.96); }
+          100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+        }
+        /* the released seal flies itself away: a small hop, then a tumbling exit through a random edge */
+        @keyframes yuxiFlyOut {
+          0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; }
+          16%  { transform: translate(calc(var(--ex) * .05), calc(var(--ey) * .05 - 3.5vh)) rotate(calc(80deg * var(--spin))) scale(1.05); opacity: 1; }
+          55%  { transform: translate(calc(var(--ex) * .5), calc(var(--ey) * .52 + 2vh)) rotate(calc(300deg * var(--spin))) scale(.84); opacity: 1; }
+          82%  { opacity: .9; }
+          100% { transform: translate(var(--ex), var(--ey)) rotate(calc(660deg * var(--spin))) scale(.52); opacity: 0; }
+        }
+        /* red imprint flash where the seal lands */
+        @keyframes yuxiImprint {
+          0%   { transform: translate(-50%,-30%) scale(1.55); opacity: 0; }
+          22%  { transform: translate(-50%,-30%) scale(1); opacity: .92; }
+          68%  { opacity: .85; }
+          100% { transform: translate(-50%,-30%) scale(.98); opacity: 0; }
+        }
+        /* whole app defocuses while the 玉璽 cinematic plays (the overlay sits outside this wrapper) */
+        .yuxi-defocus { filter: blur(9px) saturate(.94); }
+        /* 頁面列橫向捲軸：細到幾乎隱形，軌道底色與整頁背景一致 */
+        .diag-scroll { scrollbar-width: thin; scrollbar-color: rgba(163,144,111,.35) #F5F0E6; }
+        .diag-scroll::-webkit-scrollbar { height: 5px; }
+        .diag-scroll::-webkit-scrollbar-track { background: #F5F0E6; }
+        .diag-scroll::-webkit-scrollbar-thumb { background: rgba(163,144,111,.35); border-radius: 3px; }
+        .diag-scroll::-webkit-scrollbar-thumb:hover { background: rgba(163,144,111,.6); }
+        /* uploaded file name stays blurred until hovered (shoulder-surfing guard) */
+        .pdfname-blur { filter: blur(5px); transition: filter .18s ease; }
+        .pdfname-blur:hover { filter: blur(0); }
+      `}</style>
+
+      {/* everything behind the cinematic blurs out of focus while it plays;
+          長者友善字級：全站放大 1.25×（浮動面板與鉛字章動畫在此層之外，維持原尺寸） */}
+      <div className={fxRun > 0 ? "yuxi-defocus" : undefined} style={{ transition: "filter .45s ease", zoom: 1.25 }}>
+      {/* header */}
+      <header data-section="header" className="border-b border-[#E3D9C6] bg-[#FBF8F1]">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-5 py-4 xl:max-w-[79.6rem]">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border-[3px] border-[#BE3A2B] font-['Noto_Serif_TC'] text-lg font-black text-[#BE3A2B]">章</div>
+          <div>
+            <h1 className="font-['Noto_Serif_TC'] text-xl font-black tracking-wide">印・章工廠</h1>
+            <p className="text-xs tracking-widest text-[#6E6250]">騎縫章、浮水印、加頁碼，全在本機瀏覽器完成，免上傳任何伺服器。</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-5xl px-5 py-6 xl:max-w-[79.6rem]">
+        {error && (
+          <div className="mb-4 rounded-xl border border-[#BE3A2B] bg-[#FDECEA] px-4 py-3 text-sm text-[#8E2A20]">{error}</div>
+        )}
+
+        {/* step 1: uploads (the only place a PDF enters the app) */}
+        <section data-section="s1-upload" ref={s1Ref} className="mb-6 scroll-mt-4">
+          <SectionTitle n="壹" title="上傳文件與騎縫章" collapsed={!!fold.s1} onToggle={() => toggleFold("s1")} />
+          <Fold open={!fold.s1}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <DropZone label="拖曳 PDF 到這裡" hint="或點擊選擇檔案 · 加密 PDF 依參區設定處理" accept="application/pdf,.pdf" file={pdfInfo || locked} onFile={handlePdf}>
+              {!pdfInfo && locked && (
+                <LockedCard
+                  locked={locked} inputRef={pwInputRef}
+                  onSubmit={(pw) => unlockWith(lockedRef.current, pw)}
+                  onGoto={() => { setFold((f) => ({ ...f, sPw: false })); document.getElementById("unlock-options")?.scrollIntoView({ behavior: "smooth", block: "center" }); }}
+                />
+              )}
+              {pdfInfo && (
+                <div className="flex items-center gap-3">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-[#BE3A2B14] font-mono text-base font-bold text-[#BE3A2B]">PDF</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="pdfname-blur truncate text-sm font-bold text-[#2A231A]" title={pdfInfo.name}>{pdfInfo.name}</div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      <Chip>{pdfInfo.count} 頁</Chip>
+                      <Chip>{fmtBytes(pdfInfo.bytes.length)}</Chip>
+                      {pdfInfo.rotatedCount > 0 && <Chip>{pdfInfo.rotatedCount} 頁有旋轉</Chip>}
