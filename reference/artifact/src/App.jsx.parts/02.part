@@ -1,0 +1,292 @@
+// Generic round seal used on method-card thumbnails until a real seal is uploaded.
+const PLACEHOLDER_SEAL =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'>` +
+    `<circle cx='60' cy='60' r='52' fill='none' stroke='#BE3A2B' stroke-width='6'/>` +
+    `<circle cx='60' cy='60' r='40' fill='none' stroke='#BE3A2B' stroke-width='2'/>` +
+    `<text x='60' y='76' font-size='46' text-anchor='middle' fill='#BE3A2B' font-family='serif'>章</text></svg>`
+  );
+
+// Fluid scaler: the method thumbnails are designed on a fixed w×h box, then scaled up
+// (or down) to fill whatever width the card gives them, so the diagram — not the text —
+// takes the larger share of the card.
+function FluidScale({ w, h, max = 1.9, children }) {
+  const ref = useRef(null);
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => setScale(Math.min(max, Math.max(0.6, el.clientWidth / w)));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [w, max]);
+  return (
+    <div ref={ref} className="relative min-w-0 flex-1 overflow-visible" style={{ aspectRatio: `${w}/${h}` }} aria-hidden="true">
+      <div className="absolute left-1/2 top-1/2" style={{ width: w, height: h, transform: `translate(-50%, -50%) scale(${scale})` }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Miniature of how the seal lands on page edges, per method:
+// halves-h = seal across the seam (橫蓋) · halves-v = seal turned 90° (直蓋) ·
+// slices = seal cut into thin page strips (側邊裝訂).
+function MethodThumb(props) {
+  return (
+    <FluidScale w={120} h={85}>
+      <MethodThumbBox {...props} />
+    </FluidScale>
+  );
+}
+
+function MethodThumbBox({ kind, sealUrl, aspect, pageCount }) {
+  const url = sealUrl || PLACEHOLDER_SEAL;
+  const ar = aspect > 0 ? aspect : 1;
+  const W = 120, H = 85; // larger thumbnail: text column yields width to the diagram
+  const cardCls = "rounded-[3px] border border-[#E3D9C6] bg-white shadow-[0_1px_2px_rgba(60,45,20,0.12)]";
+  if (kind === "slices") {
+    const h = Math.min(H, (W * 0.92) / ar);
+    // enlarge the sliced seal inside its fixed box: transform scale never touches layout
+    const zoom = Math.min(1.2, H / h);
+    // fixed 5px strips (as displayed, after zoom), as many as fit across the box
+    const SW = 5 / zoom, GAP = 1 / zoom;
+    const n = Math.max(4, Math.floor((W / zoom + GAP) / (SW + GAP)));
+    return (
+      <div className="flex shrink-0 items-center" style={{ width: W, height: H }} aria-hidden="true">
+        <div className="flex w-full items-stretch justify-center" style={{ height: h, gap: GAP, transform: zoom > 1 ? `scale(${zoom})` : undefined, transformOrigin: "center" }}>
+          {Array.from({ length: n }, (_, i) => (
+            <div
+              key={i}
+              className="h-full shrink-0 rounded-[1px] border-[0.5px] border-[#E3D9C6] bg-white"
+              style={{
+                width: SW,
+                backgroundImage: `url("${url}")`,
+                backgroundSize: `${n * 100}% 100%`,
+                backgroundPosition: `${(i / (n - 1)) * 100}% 0`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  const vert = kind === "halves-v";
+  // displayed (post-rotation) seal box: halves-v shows the seal turned 90°
+  const dispAr = vert ? 1 / ar : ar; // displayed width / height
+  const dispW = Math.min(W - 16, H * dispAr);
+  const dispH = dispW / dispAr;
+  const box = vert
+    ? { width: dispH, height: dispW, left: (W - dispH) / 2, top: (H - dispW) / 2, transform: "rotate(90deg)" }
+    : { width: dispW, height: dispH, left: (W - dispW) / 2, top: (H - dispH) / 2 };
+  return (
+    <div className="relative shrink-0" style={{ width: W, height: H }} aria-hidden="true">
+      <div className="absolute inset-0 flex items-stretch justify-center" style={{ gap: 2 }}>
+        <div className={cardCls} style={{ width: (W - 2) / 2 }} />
+        <div className={cardCls} style={{ width: (W - 2) / 2 }} />
+      </div>
+      <div
+        className="absolute"
+        style={{ ...box, backgroundImage: `url("${url}")`, backgroundSize: "100% 100%" }}
+      />
+    </div>
+  );
+}
+
+// Seal thumbnail with a one-shot scissor animation when blank margins were auto-trimmed:
+// the original image shows with dashed cut lines + a ✂️ sweep, then fades to the trimmed result.
+function SealThumb({ seal }) {
+  const t = seal.info?.trimmed;
+  const hasTrim = !!t && t.top + t.left + t.bottom + t.right > 0 && !!seal.origUrl;
+  // slower cut with a random 1–3 s dwell at the corner (the overlay remounts per seal via key)
+  const dwell = useMemo(() => 1 + Math.random() * 2, [seal.url]);
+  let frame = null;
+  if (hasTrim) {
+    const box = 56;
+    const { origW, origH } = seal.info;
+    const k = Math.min(box / origW, box / origH);
+    const ow = origW * k, oh = origH * k;
+    frame = {
+      ow, oh,
+      l: (t.left / origW) * ow, r: (t.right / origW) * ow,
+      tp: (t.top / origH) * oh, b: (t.bottom / origH) * oh,
+    };
+  }
+  return (
+    <div className="relative h-14 w-40 shrink-0">
+      <img
+        src={seal.url} alt="印章預覽"
+        className="h-14 w-40 rounded-lg border border-[#E3D9C6] bg-[repeating-conic-gradient(#f0e9db_0%_25%,#fff_0%_50%)] bg-[length:12px_12px] object-contain"
+      />
+      {frame && (
+        <div
+          key={seal.url}
+          className="pointer-events-none absolute inset-0 flex items-center justify-center"
+          style={{ animation: `sealTrimOut ${0.15 + 1.7 + dwell + 1.7 + 0.6}s ease forwards` }}
+        >
+          <div className="relative" style={{ width: frame.ow, height: frame.oh }}>
+            <img src={seal.origUrl} alt="" className="absolute inset-0 h-full w-full rounded-sm border border-[#D9CCB4] bg-white" />
+            <div className="absolute border-t border-dashed border-[#BE3A2B]" style={{ left: frame.l, right: frame.r, top: frame.tp }} />
+            <div className="absolute border-b border-dashed border-[#BE3A2B]" style={{ left: frame.l, right: frame.r, bottom: frame.b }} />
+            <div className="absolute border-l border-dashed border-[#BE3A2B]" style={{ top: frame.tp, bottom: frame.b, left: frame.l }} />
+            <div className="absolute border-r border-dashed border-[#BE3A2B]" style={{ top: frame.tp, bottom: frame.b, right: frame.r }} />
+          </div>
+        </div>
+      )}
+      {frame && (
+        <span
+          className="pointer-events-none absolute text-[32px] leading-none drop-shadow-[0_2px_3px_rgba(60,45,20,0.45)]"
+          style={{
+            left: 0, top: 0, transform: "translate(-50%,-50%)",
+            animation: `sealCutOrbitA 1.7s ease-in-out 0.15s forwards, sealCutOrbitB 1.7s ease-in-out ${0.15 + 1.7 + dwell}s forwards, sealTrimOut ${0.15 + 1.7 + dwell + 1.7 + 0.6}s ease forwards`,
+          }}
+        >
+          {/* 路徑轉向時剪刀跟著轉：上緣向右走刀口朝右，轉角後沿右緣向下刀口朝下 */}
+          <span className="inline-block" style={{ animation: `scissorTurn 0.45s ease-in-out ${0.15 + 1.7}s forwards` }}>
+          <svg viewBox="0 0 64 64" width="34" height="34" aria-hidden="true">
+            {/* two halves snip open/shut around the pivot the whole time the scissors travel */}
+            <g style={{ transformOrigin: "26px 32px", animation: "scissSnipA 0.38s ease-in-out infinite" }}>
+              <circle cx="13" cy="22" r="7.5" fill="none" stroke="#2A231A" strokeWidth="4.5" />
+              <path d="M19 26.5 L26 32" stroke="#2A231A" strokeWidth="4.5" strokeLinecap="round" />
+              <path d="M24 30 L56 10 L59 15 L27 34.5 Z" fill="#B9BEC6" stroke="#2A231A" strokeWidth="1.6" strokeLinejoin="round" />
+            </g>
+            <g style={{ transformOrigin: "26px 32px", animation: "scissSnipB 0.38s ease-in-out infinite" }}>
+              <circle cx="13" cy="42" r="7.5" fill="none" stroke="#2A231A" strokeWidth="4.5" />
+              <path d="M19 37.5 L26 32" stroke="#2A231A" strokeWidth="4.5" strokeLinecap="round" />
+              <path d="M24 34 L56 54 L59 49 L27 29.5 Z" fill="#B9BEC6" stroke="#2A231A" strokeWidth="1.6" strokeLinejoin="round" />
+            </g>
+            <circle cx="26" cy="32" r="3.2" fill="#BE3A2B" stroke="#2A231A" strokeWidth="1.2" />
+          </svg>
+          </span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+// The imprint the 玉璽 leaves behind: no characters — a random mandala 圖騰 drawn fresh on
+// every stamping (concentric rings of petals, a dot ring, and a solid core).
+function randomMandala() {
+  let s = (Math.random() * 0x7fffffff) | 0 || 42;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const C = 48, el = [];
+  el.push(`<circle cx='${C}' cy='${C}' r='45' fill='none' stroke-width='3.5'/>`);
+  el.push(`<circle cx='${C}' cy='${C}' r='39.5' fill='none' stroke-width='1.2'/>`);
+  let rOut = 36;
+  const rings = 2 + Math.floor(rnd() * 2); // 2–3 petal rings
+  for (let ring = 0; ring < rings; ring++) {
+    const petals = 6 + Math.floor(rnd() * 7); // 6–12 petals
+    const len = Math.min(rOut * (0.42 + rnd() * 0.16), rOut - 4);
+    const wid = Math.max(2.2, len * (0.3 + rnd() * 0.22));
+    const off = rnd() * 360;
+    for (let i = 0; i < petals; i++) {
+      el.push(`<ellipse cx='${C}' cy='${C - rOut + len / 2}' rx='${wid.toFixed(1)}' ry='${(len / 2).toFixed(1)}' fill='none' stroke-width='1.5' transform='rotate(${(off + (360 / petals) * i).toFixed(1)} ${C} ${C})'/>`);
+    }
+    rOut -= len * 0.92;
+  }
+  if (rOut > 8) {
+    const dots = 5 + Math.floor(rnd() * 4);
+    const rr = Math.max(3, rOut - 2.5);
+    for (let i = 0; i < dots; i++) {
+      const a = (2 * Math.PI * i) / dots;
+      el.push(`<circle cx='${(C + Math.cos(a) * rr).toFixed(1)}' cy='${(C + Math.sin(a) * rr).toFixed(1)}' r='1.7'/>`);
+    }
+  }
+  el.push(`<circle cx='${C}' cy='${C}' r='${(2.5 + rnd() * 2.5).toFixed(1)}'/>`);
+  return "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96' fill='#FBEFE2' stroke='#FBEFE2'>${el.join("")}</svg>`);
+}
+
+// 活字印刷鉛字章 stamping cinematic, played when 產生用印 PDF is pressed: a movable-type
+// lead slug (brushed metal column, typesetter's nicks, cinnabar-inked mandala matrix on its
+// face) glides in from a random screen edge like a paper plane settling onto the desk,
+// while the whole page behind blurs out of focus; after 1s a hand pops in, grabs it, stamps
+// it at screen center, lets go and fades out; the slug then flies itself away, tumbling out
+// through a random screen edge (~1.3–2.2s).
+function YuxiFX({ onDone }) {
+  const conf = useMemo(() => {
+    const edge = Math.floor(Math.random() * 4); // 0 left · 1 right · 2 top · 3 bottom
+    const departMs = 1300 + Math.random() * 900;
+    const grab = { x: 28 + Math.random() * 18, y: 30 + Math.random() * 14 }; // vw / vh
+    const start =
+      edge === 0 ? { x: -16, y: 16 + Math.random() * 42 } :
+      edge === 1 ? { x: 116, y: 16 + Math.random() * 42 } :
+      edge === 2 ? { x: 16 + Math.random() * 66, y: -20 } :
+                   { x: 16 + Math.random() * 66, y: 120 };
+    // after stamping, the seal flies itself off through a random screen edge
+    const exitEdge = Math.floor(Math.random() * 4);
+    const exit =
+      exitEdge === 0 ? { x: -18, y: 8 + Math.random() * 76 } :
+      exitEdge === 1 ? { x: 118, y: 8 + Math.random() * 76 } :
+      exitEdge === 2 ? { x: 8 + Math.random() * 84, y: -26 } :
+                       { x: 8 + Math.random() * 84, y: 126 };
+    return { departMs, grab, dx: start.x - grab.x, dy: start.y - grab.y, ex: exit.x - 50, ey: exit.y - 46, spin: Math.random() < 0.5 ? -1 : 1 };
+  }, []);
+  const [phase, setPhase] = useState("fly");
+  const mandala = useMemo(randomMandala, []); // fresh 圖騰 per stamping
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  useEffect(() => {
+    // run once per mount: progress re-renders from generate() must not restart the timeline
+    const schedule = [
+      [1000, "grab"],      // hand pops in, no transition
+      [1120, "center"],    // carry the seal to screen center
+      [1620, "stampDown"], // press
+      [1840, "stampUp"],   // rebound
+      [2140, "release"],   // hand lets go and fades
+      [2540, "depart"],    // the seal flies itself away through a random edge
+    ];
+    const timers = schedule.map(([ms, ph]) => setTimeout(() => setPhase(ph), ms));
+    const done = setTimeout(() => onDoneRef.current(), 2540 + conf.departMs + 150);
+    return () => { timers.forEach(clearTimeout); clearTimeout(done); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const pos =
+    phase === "fly" || phase === "grab" ? conf.grab :
+    phase === "stampDown" ? { x: 50, y: 53 } :
+    { x: 50, y: 46 };
+  const moveMs = phase === "center" ? 500 : phase === "stampDown" ? 220 : phase === "stampUp" ? 300 : 0;
+  const handShown = phase !== "fly";
+  const handFading = phase === "release" || phase === "depart";
+  const departing = phase === "depart";
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[70] overflow-hidden" aria-hidden="true">
+      {/* red imprint flash right where the seal lands: a random mandala, no characters */}
+      {(phase === "stampUp" || phase === "release") && (
+        <div className="absolute" style={{ left: "50vw", top: "55vh" }}>
+          <img
+            src={mandala} alt=""
+            className="h-24 w-24 rounded-md bg-[#BE3A2B] p-1.5"
+            style={{ transform: "translate(-50%,-30%)", animation: "yuxiImprint 0.95s ease-out forwards" }}
+          />
+        </div>
+      )}
+      <div
+        className="absolute"
+        style={{
+          left: pos.x + "vw",
+          top: pos.y + "vh",
+          transform: "translate(-50%,-50%)",
+          transition: moveMs
+            ? `left ${moveMs}ms cubic-bezier(.33,.9,.35,1), top ${moveMs}ms ${phase === "stampDown" ? "cubic-bezier(.55,.06,.9,.4)" : "cubic-bezier(.34,1.4,.64,1)"}`
+            : undefined,
+        }}
+      >
+        {/* chaotic tumble-in from the chosen edge (fly phase only) */}
+        <div style={phase === "fly" ? { animation: "yuxiFly 1s cubic-bezier(.25,.8,.3,1) forwards", "--dx": conf.dx + "vw", "--dy": conf.dy + "vh", "--spin": conf.spin } : undefined}>
+          {/* after the hand lets go, the seal tumbles away on its own */}
+          <div style={departing ? { animation: `yuxiFlyOut ${conf.departMs}ms cubic-bezier(.45,.05,.75,.35) forwards`, "--ex": conf.ex + "vw", "--ey": conf.ey + "vh", "--spin": conf.spin } : undefined}>
+            <div className="relative" style={{ width: 134, height: 184 }}>
+              {/* 活字印刷鉛字章: brushed lead column + cinnabar-inked matrix face pointing down */}
+              <div className="absolute bottom-0 left-1/2" style={{ transform: "translateX(-50%)" }}>
+                {/* soft contact shadow grounding the slug */}
+                <div style={{ position: "absolute", left: "50%", bottom: -10, width: 150, height: 20, transform: "translateX(-50%)", borderRadius: "50%", background: "radial-gradient(ellipse at center, rgba(30,25,15,.35), rgba(30,25,15,0) 68%)", filter: "blur(3px)" }} />
+                {/* lead type column: cool metal with a top-left sheen and brushed vertical grain */}
+                <div style={{ position: "relative", width: 100, height: 128, margin: "0 auto", borderRadius: 5, background: "radial-gradient(ellipse 58% 40% at 30% 14%, rgba(255,255,255,.5), rgba(255,255,255,0) 70%), linear-gradient(165deg,#82828E 0%,#5A5A66 34%,#3D3D47 68%,#2C2C34 100%)", border: "2px solid #201E26", boxShadow: "inset 0 4px 7px rgba(255,255,255,.4), inset -8px -10px 14px rgba(0,0,0,.4), inset 6px 0 10px rgba(255,255,255,.14), 0 16px 28px rgba(25,22,30,.45)", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 2px, rgba(0,0,0,.05) 2px 4px)" }} />
+                  {/* typesetter's nicks: twin grooves near the base, felt to orient the slug */}
