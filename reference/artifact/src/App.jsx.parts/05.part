@@ -1,0 +1,276 @@
+    const planOpts = { align, labelHeightPt, labelWidths: labels.map((l) => l.w), rng, count: sealCount, labelBottomPt: labelBottom * MM, labelRotDeg: labelRot };
+
+    if (method === "A" || method === "C") {
+      // 橫蓋: seal as-is; 直蓋: pre-rotate 90° so the seal crosses the seam vertically
+      const base = method === "C" ? rotateQuarter(sealCanvas) : sealCanvas;
+      const scale = (sealWmm * MM) / base.width;
+      // draw per-seal angles first, then rotate canvases
+      const angleDraws = [];
+      for (let i = 0; i < (N - 1) * sealCount; i++) angleDraws.push(rLo + rng() * (rHi - rLo));
+      const rots = angleDraws.map((a) => rotateSeal(base, a));
+      // worst-case dims for safe planning
+      const worstW = Math.max(...rots.map((r) => r.width)) * scale;
+      const worstH = Math.max(...rots.map((r) => r.height)) * scale;
+      const res = planPlacement({ pages, seal: { w: worstW, h: worstH }, method: "A", ...planOpts });
+      // rebuild placements with actual rotated canvases, centered at planned cy
+      const pagesPlan = pages.map(() => ({ seals: [], label: null }));
+      const diagram = pages.map(() => ({ seals: [], label: null }));
+      const parts = []; // canvases per seal part
+      res.notes.filter((n) => n.type === "pair").forEach((note) => {
+        const i = note.pair - 1;
+        const slot = note.slot ?? 0;
+        const ri = i * sealCount + slot; // angleDraws index (conflicting pairs still consumed draws)
+        const rot = rots[ri];
+        const [lb, rb] = halfBoundaries(rot.width);
+        const [leftC, rightC] = splitVertical(rot, [lb, rb]);
+        const leftWpt = leftC.width * scale, rightWpt = rightC.width * scale, hpt = rot.height * scale;
+        const cy = note.cy;
+        const y = cy - hpt / 2;
+        const pi = i, pj = i + 1;
+        const keyL = `p${i}s${slot}L`, keyR = `p${i}s${slot}R`;
+        pagesPlan[pi].seals.push({ imgKey: keyL, x: pages[pi].w - leftWpt, y, w: leftWpt, h: hpt });
+        pagesPlan[pj].seals.push({ imgKey: keyR, x: 0, y, w: rightWpt, h: hpt });
+        diagram[pi].seals.push({ dataURL: leftC.toDataURL(), x: pages[pi].w - leftWpt, y, w: leftWpt, h: hpt });
+        diagram[pj].seals.push({ dataURL: rightC.toDataURL(), x: 0, y, w: rightWpt, h: hpt });
+        parts.push({ key: keyL, canvas: leftC }, { key: keyR, canvas: rightC });
+      });
+      pages.forEach((p, i) => {
+        const text = labels[i].text;
+        const w = labels[i].w;
+        let x = labelX(align, p.w, w);
+        let yB = labelBottom * MM;
+        if (labelRot < 0) {
+          // clockwise-rotated labels descend to the right: raise the origin so the
+          // lowest glyph stays on the page; right-aligned runs end at the right margin
+          const rad = (-labelRot * Math.PI) / 180;
+          yB += w * Math.sin(rad);
+          if (align === "right") x = p.w - 10 * MM - w * Math.cos(rad);
+        } else if (labelRot > 0 && align === "right") {
+          // counterclockwise runs ascend to the right: pull the origin left so the
+          // ascending (top-right) end still lands on the right margin
+          const rad = (labelRot * Math.PI) / 180;
+          x = p.w - 10 * MM - w * Math.cos(rad);
+        }
+        pagesPlan[i].label = { text, x, yBottom: yB, w, size: labelSize, rot: labelRot };
+        diagram[i].label = { x, w, bottomMm: yB / MM, rot: labelRot };
+      });
+      return { res, pagesPlan, diagram, parts, labels, conflicts: res.conflicts, blanks: [], scale };
+    }
+    // method B: `sealCount` strips, each sliced across all pages at its own angle
+    const N2 = pages.length;
+    const strips = [];
+    for (let j = 0; j < sealCount; j++) {
+      const angle = rLo + rng() * (rHi - rLo);
+      const rot = rotateSeal(sealCanvas, angle);
+      const scale = (N2 * sliceWmm * MM) / rot.width;
+      strips.push({ angle, rot, scale, hpt: rot.height * scale });
+    }
+    const worstH = Math.max(...strips.map((s) => s.hpt));
+    const res = planPlacement({ pages, seal: { w: N2 * sliceWmm * MM, h: worstH }, method, ...planOpts });
+    const sliceNotes = res.notes.filter((n) => n.type === "slices");
+    const pagesPlan = pages.map(() => ({ seals: [], label: null }));
+    const diagram = pages.map(() => ({ seals: [], label: null }));
+    const parts = [];
+    const blanksSet = new Set();
+    strips.forEach((st, j) => {
+      const note = sliceNotes.find((n) => (n.slot ?? 0) === j);
+      if (!note) return;
+      const slices = splitVertical(st.rot, sliceBoundaries(st.rot.width, N2));
+      slices.forEach((c, i) => { if (inkCoverage(c) < 0.005) blanksSet.add(i + 1); });
+      const sliceWpt = sliceWmm * MM;
+      const y = note.cy - st.hpt / 2;
+      slices.forEach((c, i) => {
+        const key = `s${i}t${j}`;
+        pagesPlan[i].seals.push({ imgKey: key, x: pages[i].w - sliceWpt, y, w: sliceWpt, h: st.hpt });
+        diagram[i].seals.push({ dataURL: c.toDataURL(), x: pages[i].w - sliceWpt, y, w: sliceWpt, h: st.hpt });
+        parts.push({ key, canvas: c });
+      });
+    });
+    const blanks = [...blanksSet].sort((a, b) => a - b);
+    pages.forEach((p, i) => {
+      const text = labels[i].text;
+      const w = labels[i].w;
+      let x = labelX(align, p.w, w);
+      let yB = labelBottom * MM;
+      if (labelRot < 0) {
+        // clockwise-rotated labels descend to the right: raise the origin so the
+        // lowest glyph stays on the page; right-aligned runs end at the right margin
+        const rad = (-labelRot * Math.PI) / 180;
+        yB += w * Math.sin(rad);
+        if (align === "right") x = p.w - 10 * MM - w * Math.cos(rad);
+      } else if (labelRot > 0 && align === "right") {
+        // counterclockwise runs ascend to the right: pull the origin left so the
+        // ascending (top-right) end still lands on the right margin
+        const rad = (labelRot * Math.PI) / 180;
+        x = p.w - 10 * MM - w * Math.cos(rad);
+      }
+      pagesPlan[i].label = { text, x, yBottom: yB, w, size: labelSize, rot: labelRot };
+      diagram[i].label = { x, w, bottomMm: yB / MM, rot: labelRot };
+    });
+    return { res, pagesPlan, diagram, parts, labels, conflicts: res.conflicts, blanks, angle: strips[0].angle, scale: strips[0].scale };
+  }, [pdfInfo, seal, sealCanvas, method, align, lang, sealWmm, sliceWmm, sealCount, labelSize, labelBottom, labelRot, seed, rotMin, rotMax]);
+
+  // 浮水印 layer: one translucent full-page image per unique page size, prepended under
+  // each page's seal parts (so seals + page numbers print over it, over the page content)
+  const plan = useMemo(() => {
+    if (!basePlan || !pdfInfo) return basePlan;
+    const text = wmText.trim();
+    if (!wmOn || !text) return basePlan;
+    void wmFontReady; // re-render the canvas once webfonts are confirmed loaded
+    const cache = new Map(); // sizeKey → {key, canvas, dataURL}
+    const getWm = (p) => {
+      const sk = `${Math.round(p.w)}x${Math.round(p.h)}`;
+      if (!cache.has(sk)) {
+        const canvas = buildWatermarkCanvas({ text, sizePt: wmSize, opacityPct: wmOpacity, angleDeg: wmAngle, color: wmColor, tile: wmTile, pageWpt: p.w, pageHpt: p.h });
+        cache.set(sk, { key: `wm:${sk}`, canvas, dataURL: canvas.toDataURL() });
+      }
+      return cache.get(sk);
+    };
+    const pagesPlan = basePlan.pagesPlan.map((pp, i) => {
+      const p = pdfInfo.pages[i];
+      const wm = getWm(p);
+      return { ...pp, seals: [{ imgKey: wm.key, x: 0, y: 0, w: p.w, h: p.h }, ...pp.seals] };
+    });
+    const diagram = basePlan.diagram.map((pd, i) => {
+      const p = pdfInfo.pages[i];
+      const wm = getWm(p);
+      return { ...pd, seals: [{ dataURL: wm.dataURL, x: 0, y: 0, w: p.w, h: p.h }, ...pd.seals] };
+    });
+    const wmParts = [...cache.values()].map((v) => ({ key: v.key, canvas: v.canvas }));
+    return { ...basePlan, pagesPlan, diagram, parts: [...wmParts, ...basePlan.parts] };
+  }, [basePlan, pdfInfo, wmOn, wmText, wmSize, wmOpacity, wmAngle, wmColor, wmTile, wmFontReady]);
+
+  const ready = !!(pdfInfo && seal && method && plan);
+  const hasConflicts = (plan?.conflicts?.length || 0) > 0;
+  const hasBlanks = method === "B" && (plan?.blanks?.length || 0) > 0;
+  // 捌區只要有 PDF 就能產出：印章/方式未備齊時走「不用印」輸出（僅套用產出設定）
+  const outputOnly = !!pdfInfo && !ready;
+  const canGenerate = !!pdfInfo && !busy && (outputOnly || ((!hasConflicts || skipConflicts) && (!hasBlanks || blankOK)));
+  // 貳區：解密後才啟用；解密後可直接下載未加密版本
+  const decrypted = !!locked?.cached;
+  const decUrl = useMemo(() => (locked?.cached ? URL.createObjectURL(new Blob([locked.cached.bytes], { type: "application/pdf" })) : null), [locked?.cached]);
+  useEffect(() => () => { if (decUrl) URL.revokeObjectURL(decUrl); }, [decUrl]);
+  const decName = locked ? `${sanitizeBase(locked.name.replace(/\.pdf$/i, "")) || "document"}_已解密.pdf` : "";
+  // 解密前（原始加密檔）
+  const origUrl = useMemo(() => (locked?.bytes ? URL.createObjectURL(new Blob([locked.bytes], { type: "application/pdf" })) : null), [locked?.bytes]);
+  useEffect(() => () => { if (origUrl) URL.revokeObjectURL(origUrl); }, [origUrl]);
+  const origName = locked ? `${sanitizeBase(locked.name.replace(/\.pdf$/i, "")) || "document"}_未解密.pdf` : "";
+
+  // any config change (a new plan) invalidates the old output: download button goes back to grey;
+  // if output had already been produced, flag 需重新用印 so the generate button keeps pulsing
+  useEffect(() => { if (resultRef.current) setStale(true); setResult(null); }, [plan]);
+
+  // output options: 全文件灰階 / 壓縮 change the content → regenerate; 重新命名 only renames the download
+  const pdfBase = pdfInfo ? pdfInfo.name.replace(/\.pdf$/i, "") : "";
+  const finalFileName = (sanitizeBase(outName) || pdfBase || "output") + ".pdf";
+  useEffect(() => { if (resultRef.current) setStale(true); setResult(null); }, [grayDoc, compressPdf, compressQuality, compressMode, targetMB, targetUnit, san]);
+
+  // 下載鈕搶先被點：「產生用印 PDF」外框閃爍幾秒後自動停止
+  useEffect(() => {
+    if (!nudgeKey) return;
+    const t = setTimeout(() => setNudgeKey(0), 3000);
+    return () => clearTimeout(t);
+  }, [nudgeKey]);
+  useEffect(() => { setResult((r) => (r ? { ...r, name: finalFileName } : r)); }, [finalFileName]);
+
+  // ---------- document post-processing (grayscale / compression) ----------
+  // ratio mode: one pass at the chosen JPEG quality.
+  // size mode: search for the highest JPEG quality whose output fits the target; if even the
+  // lowest quality is too big, downsample images step by step. overheadBytes reserves room
+  // for what gets appended afterwards (seal images, label font).
+  // Returns { bytes, stats, q, scale, target, reached } or null when the original should be kept.
+  async function runPostprocess(overheadBytes = 0) {
+    if (!grayDoc && !compressPdf) return null;
+    const src = pdfInfo.bytes;
+    const pass = (q, scale = 1, tag = "") => postprocessPdf(src, {
+      grayscale: grayDoc, jpegQuality: q, jpegScale: scale,
+      onProgress: (i, n) => setBusy(`文件後製處理${tag}… ${i}/${n}`),
+    });
+    const keepOrig = (pp) => !grayDoc && compressPdf && pp.bytes.length > src.length;
+    if (!compressPdf || compressMode === "ratio") {
+      const q = compressPdf ? clampNum(compressQuality, 10, 100, 80) : 0;
+      const pp = await pass(compressPdf ? q / 100 : null);
+      if (keepOrig(pp)) { addLog(`壓縮後檔案反而變大（${fmtBytes(pp.bytes.length)} > ${fmtBytes(src.length)}），已改用原檔內容`); return null; }
+      return { bytes: pp.bytes, stats: pp.stats, q, scale: 1, target: 0, reached: true };
+    }
+    const target = Math.round(clampTarget(targetMB, targetUnit) * UNIT_BYTES[targetUnit]);
+    const budget = Math.max(1024, target - overheadBytes);
+    addLog(`目標大小壓縮：目標 ${fmtBytes(target)}${overheadBytes ? `（預留印章 ${fmtBytes(overheadBytes)}）` : ""} · 原檔 ${fmtBytes(src.length)}`);
+    let best = null; // smallest attempt so far
+    const tryPass = async (q, scale) => {
+      const pp = await pass(q / 100, scale, `（品質 ${q}%${scale < 1 ? ` · 解析度 ${Math.round(scale * 100)}%` : ""}）`);
+      const r = { bytes: pp.bytes, stats: pp.stats, q, scale, target };
+      if (!best || r.bytes.length < best.bytes.length) best = r;
+      return r;
+    };
+    // 1) highest quality that fits (binary search on 10–95 in 5% steps)
+    let fit = null;
+    const top = await tryPass(95, 1);
+    if (top.bytes.length <= budget) fit = top;
+    else {
+      let lo = 2, hi = 18; // quality = k*5
+      const bottom = await tryPass(10, 1);
+      if (bottom.bytes.length <= budget) {
+        fit = bottom;
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          const r = await tryPass(mid * 5, 1);
+          if (r.bytes.length <= budget) { fit = r; lo = mid; } else hi = mid;
+        }
+      } else {
+        // 2) still too big: downsample images, keeping a readable quality
+        for (const scale of [0.75, 0.5, 0.35, 0.25]) {
+          const r = await tryPass(60, scale);
+          if (r.bytes.length <= budget) { fit = r; break; }
+        }
+      }
+    }
+    const pick = fit || best;
+    addLog(fit
+      ? `目標大小壓縮完成：圖片品質 ${pick.q}%${pick.scale < 1 ? ` · 解析度 ${Math.round(pick.scale * 100)}%` : ""} → ${fmtBytes(pick.bytes.length)}`
+      : `目標大小壓縮未達標：最小只能壓到 ${fmtBytes(pick.bytes.length)}（目標 ${fmtBytes(target)}），文件多為文字或向量內容時可壓縮空間有限`);
+    if (keepOrig(pick)) { addLog(`壓縮後檔案反而變大，已改用原檔內容`); return null; }
+    return { ...pick, reached: !!fit };
+  }
+  const compressLabel = (pp) => pp && compressPdf
+    ? `${pp.target ? `目標 ${fmtBytes(pp.target)} · ` : ""}圖片品質 ${pp.q}%${pp.scale < 1 ? ` · 解析度 ${Math.round(pp.scale * 100)}%` : ""}`
+    : "";
+
+  // ---------- generation ----------
+  async function generate() {
+    if (!canGenerate) return;
+    if (outputOnly) return generatePlain();
+    setFxRun((k) => k + 1); // play the 活字鉛字章 cinematic alongside generation
+    const t0 = performance.now();
+    const rLo = Math.min(rotMin, rotMax), rHi = Math.max(rotMin, rotMax);
+    addLog(`開始產生 · ${METHOD_NAMES[method]} · ${grayscale ? "灰階" : "原色"}${sealOpacity < 100 ? ` · 淡化 ${sealOpacity}%` : ""} · 旋轉 ${rLo}°～${rHi}° · 種子 ${seed}${sealCount > 1 ? ` · 章數 ${sealCount}` : ""}${wmOn && wmText.trim() ? ` · 浮水印「${wmText.trim()}」` : ""}`);
+    setBusy("準備印章影像…"); setError(null);
+    try {
+      const sealImages = [];
+      for (const p of plan.parts) {
+        const img = await canvasToPdfImage(p.canvas, deflate);
+        sealImages.push({ key: p.key, ...img });
+      }
+      addLog(`印章影像準備完成：${sealImages.length} 張切片 · RGB+Alpha 壓縮`);
+      // optional document post-processing (grayscale / compression) on the base file,
+      // before the seal overlay is appended
+      let srcBytes = pdfInfo.bytes;
+      let ppStats = null;
+      let ppRes = null;
+      if (grayDoc || compressPdf) {
+        setBusy("文件後製處理…");
+        // 預留印章影像 + 頁碼字型的空間，讓最終檔案也落在目標大小內
+        const overhead = sealImages.reduce((n, im) => n + (im.rgb?.length || 0) + (im.mask?.length || 0), 0) + 60000;
+        ppRes = await runPostprocess(overhead);
+        if (ppRes) {
+          srcBytes = ppRes.bytes;
+          ppStats = ppRes.stats;
+          addLog(`後製完成：${grayDoc ? "全文件灰階 · " : ""}${compressPdf ? `${compressLabel(ppRes)} · ` : ""}${fmtBytes(pdfInfo.bytes.length)} → ${fmtBytes(ppRes.bytes.length)}（內容流 ${ppRes.stats.contents} 條 · 圖片 ${ppRes.stats.images} 張）`);
+        }
+      }
+      // 貳區淨化：整份重寫（只保留追得到的物件），印章再以增量方式疊上
+      const sanRes = await runSanitize(srcBytes);
+      if (sanRes) srcBytes = sanRes.bytes;
+      setBusy("寫入 PDF 頁面…");
+      const res = await generateSealedPdf({
+        pdfBytes: srcBytes, pagesPlan: plan.pagesPlan, sealImages, lang,
