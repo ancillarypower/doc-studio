@@ -1,0 +1,231 @@
+                      {pdfInfo.unlock && <Chip>{pdfInfo.unlock.kind === "perm" ? "已解除權限限制" : "已解密"}</Chip>}
+                      {pdfInfo.unlock && <Chip>{pdfInfo.unlock.algo}</Chip>}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </DropZone>
+            <DropZone label="拖曳印章圖片" hint="PNG 透明背景最佳 · JPG 自動去除白底" accept="image/png,image/jpeg,image/webp" file={seal} onFile={handleSeal}>
+              {seal && (
+                <div className="flex items-center gap-3">
+                  <SealThumb seal={seal} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold">已裁切空白邊</div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      <Chip>{seal.info.w}×{seal.info.h}px</Chip>
+                      {seal.info.bytes != null && <Chip>{fmtBytes(seal.info.bytes)}</Chip>}
+                      {seal.info.downscaled && <Chip>已縮小以加速處理</Chip>}
+                      {seal.info.bgRemoved && <Chip>已去背</Chip>}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </DropZone>
+          </div>
+          </Fold>
+        </section>
+
+        {/* 貳 檔案狀態：upload-time scan; only detected items are listed, each with its 淨化 option */}
+        <section data-section="s2-scan" className={`mb-6 transition-opacity ${pdfInfo ? "" : "opacity-40"}`}>
+          <SectionTitle n="貳" title="檔案狀態" collapsed={!!fold.sScan} onToggle={() => toggleFold("sScan")} />
+          <Fold open={!fold.sScan}>
+          <div className={pdfInfo ? undefined : "pointer-events-none"}>
+          <div className="rounded-2xl border border-[#E3D9C6] bg-[#FBF8F1] p-4">
+            <ScanPanel scan={pdfInfo ? scan : null} san={san} setSan={setSan} />
+          </div>
+          </div>
+          </Fold>
+        </section>
+
+        {/* step 2: 移除密碼 (encrypted-PDF options). Stays dimmed and unclickable until an
+            encrypted upload has actually been decrypted (cached decrypted bytes exist); after that
+            the options stay live (untick → 卸下, retick → 回流) and a 下載解密後 PDF button appears. */}
+        <section data-section="s3-password" className={`mb-6 transition-opacity ${decrypted ? "" : "opacity-40"}`}>
+          <SectionTitle n="參" title="移除密碼" collapsed={!!fold.sPw} onToggle={() => toggleFold("sPw")} />
+          <Fold open={!fold.sPw}>
+          <div className={decrypted ? undefined : "pointer-events-none"} aria-disabled={!decrypted}>
+          <div className="rounded-2xl border border-[#E3D9C6] bg-[#FBF8F1] p-4">
+          {/* 加密文件選項：PDF 上傳後才可操作，改動時觸發回流壹區 */}
+          <div id="unlock-options" className="rounded-xl border border-[#E3D9C6] bg-white/70 px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
+              <label className="flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={unlockPw} onChange={(e) => toggleUnlock("pw", e.target.checked)} disabled={!decrypted} className="mt-0.5 h-4 w-4 accent-[#BE3A2B]" />
+                <span>
+                  <span className="font-bold text-[#2A231A]">移除密碼後加印騎縫章或浮水印</span>
+                  <span className="block text-xs text-[#6E6250]">有開啟密碼的 PDF：在壹區輸入密碼，解密後回到壹區接續用印</span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={unlockPerm} onChange={(e) => toggleUnlock("perm", e.target.checked)} disabled={!decrypted} className="mt-0.5 h-4 w-4 accent-[#BE3A2B]" />
+                <span>
+                  <span className="font-bold text-[#2A231A]">移除權限控制（owner password only）</span>
+                  <span className="block text-xs text-[#6E6250]">只設權限密碼的 PDF：自動解除列印、複製等限制</span>
+                </span>
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-[#8A7C66]">僅限你有權處理的文件。解除後產出的用印 PDF 不再加密。</p>
+          </div>
+          {/* 解密後：直接下載未加密版本（不用印） */}
+          {decrypted && (
+            <div className="mt-3 flex flex-col items-center gap-2">
+              {locked.stage !== "unlocked" && (
+                <p className="text-center text-sm text-[#6E6250]">已取消勾選，重新勾選即可下載解密後 PDF。</p>
+              )}
+              <div className="flex w-full gap-3">
+              {locked.stage === "unlocked" ? (
+                <a
+                  href={decUrl} download={decName}
+                  onClick={() => addLog(`下載解密後 PDF：${decName}（${fmtBytes(locked.cached.bytes.length)}）`)}
+                  className="flex flex-[3] items-center justify-center rounded-xl bg-[#2A6B3A] px-6 py-4 font-['Noto_Serif_TC'] text-lg font-black tracking-[0.12em] text-white shadow-[0_4px_16px_rgba(42,107,58,0.35)] transition-all duration-150 hover:shadow-[0_6px_22px_rgba(42,107,58,0.5)] active:translate-y-[2px] focus:outline-none focus-visible:ring-4 focus-visible:ring-[#2A6B3A44]"
+                >⬇ 下載解密後 PDF</a>
+              ) : (
+                <span className="flex flex-[3] cursor-not-allowed items-center justify-center rounded-xl bg-[#C9BBA6] px-6 py-4 font-['Noto_Serif_TC'] text-lg font-black tracking-[0.12em] text-black/70">⬇ 下載解密後 PDF</span>
+              )}
+                {/* 解密前：原始加密檔，隨時可下載 */}
+                <a
+                  href={origUrl} download={origName}
+                  onClick={() => addLog(`下載解密前 PDF：${origName}（${fmtBytes(locked.bytes.length)}）`)}
+                  className="flex flex-[2] items-center justify-center rounded-xl bg-[#77716A] px-5 py-4 font-['Noto_Serif_TC'] text-lg font-black tracking-[0.12em] text-white shadow-[0_4px_14px_rgba(60,55,48,0.25)] transition-all duration-150 hover:bg-[#67625B] active:translate-y-[2px] focus:outline-none focus-visible:ring-4 focus-visible:ring-[#77716A55]"
+                >⬇ 下載解密前 PDF</a>
+              </div>
+            </div>
+          )}
+          </div>
+          </div>
+          </Fold>
+        </section>
+
+        {/* step 3: seal method */}
+        <section data-section="s4-method" className="mb-6">
+          <div className={`transition-opacity ${pdfInfo && seal ? "" : "opacity-40"}`}>
+          <SectionTitle n="肆" title="選擇騎縫章用印方式" collapsed={!!fold.s2} onToggle={() => toggleFold("s2")} />
+          </div>
+          <Fold open={!fold.s2}>
+          <div className={`grid gap-3 transition-opacity sm:grid-cols-3 ${pdfInfo && seal ? "" : "pointer-events-none opacity-40"}`}>
+            {[
+              { key: "A", name: "摺頁橫蓋法", desc: "相鄰兩頁各蓋半章，併攏可拼回完整印章", thumb: "halves-h" },
+              { key: "C", name: "摺頁直蓋法", desc: "印章直向轉 90°，相鄰兩頁各蓋半章，併攏拼回", thumb: "halves-v" },
+              { key: "B", name: "側邊裝訂蓋章法", desc: "整份右緣切成連續薄片，依頁序拼回印章", thumb: "slices" },
+            ].map((m) => (
+              <button
+                key={m.key} type="button" aria-pressed={method === m.key}
+                title={method === m.key ? "再點一次取消選取" : undefined}
+                onClick={() => { setMethod((cur) => (cur === m.key ? null : m.key)); setResult(null); }}
+                className={`relative flex items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-[#BE3A2B] ${
+                  method === m.key ? "border-[#BE3A2B] bg-[#FBF3EF] shadow-[0_2px_10px_rgba(190,58,43,0.15)]" : "border-[#D9CCB4] bg-[#FBF8F1] hover:border-[#BE3A2B66]"
+                }`}
+              >
+                <div className="min-w-0 w-1/2 shrink-0">
+                  <span className="font-['Noto_Serif_TC'] text-base font-bold">{m.name}</span>
+                  <p className="mt-1 text-xs leading-relaxed text-[#6B5F4C]">{m.desc}</p>
+                  {/* 選取標記：排在說明文字下方、文字欄右端（卡片中間偏左），走版面流不疊在文字上；
+                      未選取時保留同尺寸空位，選取切換不跳版 */}
+                  <div className="mt-2 flex h-9 justify-end" aria-hidden="true">
+                    {method === m.key && (
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#BE3A2B] text-white shadow-[0_2px_8px_rgba(190,58,43,0.45)]">
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12.5l5 5L19.5 7" /></svg>
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <MethodThumb
+                  kind={m.thumb}
+                  sealUrl={seal?.url}
+                  aspect={seal ? seal.info.w / seal.info.h : 1}
+                  pageCount={pdfInfo?.count}
+                />
+              </button>
+            ))}
+          </div>
+          </Fold>
+        </section>
+
+        {/* step 4: placement preview */}
+        <section data-section="s5-preview" className={`mb-6 transition-opacity ${ready ? "" : "opacity-40"}`}>
+          <SectionTitle n="伍" title="預覽" collapsed={!!fold.s3} onToggle={() => toggleFold("s3")} />
+          <Fold open={!fold.s3}>
+          <div className={ready ? undefined : "pointer-events-none"}>
+          {ready && (
+            <div className="rounded-2xl border border-[#E3D9C6] bg-[#FBF8F1] p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-xs text-[#6E6250]">縮圖為文件實際頁面 · 紅色為印章位置，紅線為頁碼位置{wmOn && wmText.trim() ? " · 淡色文字為浮水印" : ""}</div>
+                <button
+                  type="button"
+                  onClick={() => setJoined((j) => !j)}
+                  className="min-w-[180px] rounded-full border border-[#D9CCB4] bg-white px-3 py-1 text-center text-xs font-bold text-[#4A4132] transition-colors hover:border-[#BE3A2B] hover:text-[#BE3A2B]"
+                >
+                  {joined ? "↔ 展開頁面" : "⇄ 併攏驗證"}
+                </button>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+              <div className="min-w-0 flex-1">
+              <Diagram pages={pdfInfo.pages} planView={plan.diagram} joined={joined} method={method} thumbs={thumbs} onNeedThumb={requestThumb} onRenderPage={renderZoomPage} />
+
+              {hasBlanks && (
+                <div className="mt-3 rounded-xl border border-[#C98A2F] bg-[#FCF4E3] px-4 py-3 text-sm text-[#7A5A1E]">
+                  <b>第 {plan.blanks.join("、")} 頁的印章切片近乎空白</b>（旋轉後該處無印面）。
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" onClick={() => setBlankOK(true)} className={`rounded-full px-3 py-1 text-xs font-bold ${blankOK ? "bg-[#7A5A1E] text-white" : "border border-[#C98A2F]"}`}>保留空白切片，繼續</button>
+                    <button type="button" onClick={() => { setSeed(Math.floor(Math.random() * 1e9)); setBlankOK(false); }} className="rounded-full border border-[#C98A2F] px-3 py-1 text-xs">換個角度</button>
+                  </div>
+                </div>
+              )}
+              </div>
+              {hasConflicts && (
+                <div className="shrink-0 rounded-xl border border-[#EAB308] bg-[#FEF9C3] px-4 py-3 text-sm text-[#854D0E] shadow-[0_2px_8px_rgba(234,179,8,0.25)] sm:w-72">
+                  <b>部分頁面找不到安全的用印位置</b>（頁對：{plan.conflicts.map((c) => c.pages ? c.pages.join("–") : "整份").join("、")}）。
+                    建議縮小印章尺寸、減少章數或調整頁碼對齊。
+                  <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs">
+                    <input type="checkbox" className="accent-[#CA8A04]" checked={skipConflicts} onChange={(e) => setSkipConflicts(e.target.checked)} />
+                    我了解風險，仍要產生（這些頁對將不加蓋印章）
+                  </label>
+                </div>
+              )}
+              </div>
+            </div>
+          )}
+          </div>
+          </Fold>
+        </section>
+
+        {/* step 4: seal config */}
+        <section data-section="s6-format" className={`mb-6 transition-opacity ${pdfInfo && seal && method ? "" : "opacity-40"}`}>
+          <SectionTitle
+            n="陸" title="編輯騎縫章格式"
+            collapsed={!!fold.s4} onToggle={() => toggleFold("s4")}
+            action={
+              <ResetToggle
+                getCustom={() => ({ sealWmm, sliceWmm, sealCount, grayscale, sealOpacity, rotMin, rotMax, seed })}
+                defaults={() => ({ sealWmm: 30, sliceWmm: 2.0, sealCount: 1, grayscale: false, sealOpacity: 100, rotMin: -10, rotMax: 10, seed: Math.floor(Math.random() * 1e9) })}
+                apply={(v) => { setSealWmm(v.sealWmm); setSliceWmm(v.sliceWmm); setSealCount(v.sealCount); setGrayscale(v.grayscale); setSealOpacity(v.sealOpacity); setRotMin(v.rotMin); setRotMax(v.rotMax); setSeed(v.seed); }}
+              />
+            }
+          />
+          <Fold open={!fold.s4}>
+          <div className={pdfInfo && seal && method ? undefined : "pointer-events-none"}>
+          <div className="rounded-2xl border border-[#E3D9C6] bg-[#FBF8F1] p-4">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-sm">
+              {(method === "A" || method === "C") && (
+                <label className="flex items-center gap-2 font-bold text-[#2A231A]">章寬
+                  <input type="number" min="10" max="60" step="1" value={sealWmm} onChange={(e) => setSealWmm(Number(e.target.value) || 30)} className="w-16 rounded-md border border-[#D9CCB4] bg-white px-2 py-1.5 font-mono text-xs font-normal" />
+                  <span className="text-xs font-normal text-[#6E6250]">mm{method === "C" ? "（直向跨幅）" : ""}</span>
+                </label>
+              )}
+              {method === "B" && (
+                <label className="flex items-center gap-2 font-bold text-[#2A231A]">每片寬
+                  <input type="number" min="0.1" step="0.1" value={sliceWmm} onChange={(e) => setSliceWmm(Math.max(0.1, Number(e.target.value) || 2.0))} className="w-48 rounded-md border border-[#D9CCB4] bg-white px-2 py-1.5 font-mono text-xs font-normal" />
+                  <span className="text-xs font-normal text-[#6E6250]">mm</span>
+                </label>
+              )}
+              <label className="flex items-center gap-2 font-bold text-[#2A231A]">章數
+                <input type="number" min="1" max="5" step="1" value={sealCount} onChange={(e) => setSealCount(Math.round(clampNum(e.target.value, 1, 5, 1)))} className="w-16 rounded-md border border-[#D9CCB4] bg-white px-2 py-1.5 font-mono text-xs font-normal" />
+                <span className="text-xs font-normal text-[#6E6250]">個（預設 1；多章沿頁緣上下分散）</span>
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-3 text-sm">
+              {/* 灰階印章 + 淡化 keep together as one unit: 灰階印章 always sits on 淡化's left */}
+              <div className="flex items-center gap-x-5">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input type="checkbox" checked={grayscale} onChange={(e) => setGrayscale(e.target.checked)} className="h-4 w-4 accent-[#BE3A2B]" />
+                  <span className="font-bold text-[#2A231A]">灰階印章</span>
+                </label>
