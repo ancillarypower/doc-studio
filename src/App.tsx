@@ -1,4 +1,4 @@
-// 印・章工廠 Doc Studio: app shell.
+// 文件工坊 Doc Studio: app shell.
 // Ported from the ClickUp artifact (v38). The original single-file source and its build live in
 // reference/artifact/ and are used by CI as the visual baseline. The artifact's changelog (v12–v38)
 // is preserved at the top of reference/artifact/src/App.jsx.
