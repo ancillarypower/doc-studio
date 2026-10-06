@@ -14,4 +14,13 @@
 @theme {
   --default-ring-width: 3px;
   --default-ring-color: rgb(59 130 246 / 0.5);
+  /* v4 font-size utilities set *unitless* line-heights, so a smaller inline child (e.g. the
+     text-[11px] 預設 badge inside a text-sm pill) gets a shorter line box than in v3, where
+     the absolute rem value was inherited. Restore the v3 absolute values. */
+  --text-xs--line-height: 1rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl--line-height: 2rem;
 }

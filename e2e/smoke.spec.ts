@@ -17,7 +17,11 @@ test("all-triggers fixture: 貳區 lists every scanner finding", async ({ page }
   await openSettled(page, NEW_URL);
   await uploadPdf(page, "fixtures/all-triggers.pdf");
   const scan = page.locator('[data-section="s2-scan"]');
-  for (const label of ["中繼資料", "JavaScript", "附件", "連結", "EXIF", "隱藏圖層", "隱形文字", "數位簽章", "疑似藏字"]) {
+  // all 12 categories detected, so the 「未偵測到」 line must be absent
+  await expect(scan).toContainText("偵測到 12 項");
+  await expect(scan).not.toContainText("未偵測到");
+  // row titles as rendered by ScanPanel (疑似藏字 is only the short name used in 未偵測到)
+  for (const label of ["中繼資料", "舊版本", "JavaScript 與自動動作", "附件與內嵌檔案", "連結", "PieceInfo、書籤", "EXIF", "註解與表單", "隱藏圖層", "隱形文字", "數位簽章", "同色文字、被蓋住的文字"]) {
     await expect(scan).toContainText(label);
   }
 });
