@@ -65,7 +65,7 @@ export function useStudio() {
   const [logUrl, setLogUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!log.length) { setLogUrl(null); return; }
-    const body = ["印・章工廠 處理紀錄", `版本：v${APP_VERSION}`, `匯出時間：${new Date().toLocaleString("zh-TW", { hour12: false })}`, `共 ${log.length} 筆`, "",
+    const body = ["文件工坊 處理紀錄", `版本：v${APP_VERSION}`, `匯出時間：${new Date().toLocaleString("zh-TW", { hour12: false })}`, `共 ${log.length} 筆`, "",
       ...log.map((e) => `[${e.d ? e.d + " " : ""}${e.t}] ${e.msg}`)].join("\r\n");
     const u = URL.createObjectURL(new Blob(["\uFEFF" + body], { type: "text/plain;charset=utf-8" }));
     setLogUrl(u);

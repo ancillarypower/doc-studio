@@ -1,4 +1,4 @@
-// Shared types for the 印・章工廠 UI.
+// Shared types for the 文件工坊 UI.
 // The PDF / seal engines (src/pdf, src/seal) are still untyped JavaScript in phase A;
 // values that flow straight out of them are typed as EngineData until phase B adds real types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

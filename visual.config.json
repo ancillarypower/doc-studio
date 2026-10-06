@@ -1,1 +1,1 @@
-{ "mask": ["[data-section=\"s10-log\"] li > span:first-child"] }
+{ "mask": ["[data-section=\"s10-log\"] li > span:first-child", "[data-section=\"header\"] h1"] }
