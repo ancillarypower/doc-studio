@@ -1,0 +1,9 @@
+node_modules/
+dist/
+reference/build/
+test-results/
+playwright-report/
+visual-report/
+*.log
+.DS_Store
+fixtures/*.pdf

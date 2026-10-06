@@ -1,0 +1,313 @@
+  // PDF 只收在壹區：拖放落在上傳框以外時，擋下瀏覽器預設的「直接開檔」（會洗掉整頁設定）
+  useEffect(() => {
+    const over = (e) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); };
+    const drop = (e) => {
+      if (e.defaultPrevented || !e.dataTransfer?.types?.includes("Files")) return;
+      e.preventDefault();
+      setError("PDF 請拖曳到壹區的「拖曳 PDF 到這裡」上傳框。");
+      setFold((f) => ({ ...f, s1: false }));
+      s1Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => { window.removeEventListener("dragover", over); window.removeEventListener("drop", drop); };
+  }, []);
+
+  // make sure the display faces are actually loaded before any watermark canvas is drawn
+  useEffect(() => {
+    let live = true;
+    if (document.fonts?.load) {
+      Promise.all([
+        document.fonts.load('700 64px "Noto Sans TC"', wmText || "僅供參考"),
+        document.fonts.load('900 64px "Noto Serif TC"', wmText || "僅供參考"),
+      ]).then(() => { if (live) setWmFontReady(true); }).catch(() => {});
+    }
+    return () => { live = false; };
+  }, [wmText]);
+
+  // real page thumbnails for the 配置預覽 diagram: rendered on demand from the
+  // actual PDF content, one page at a time so the UI never blocks
+  const pdfDocRef = useRef(null); // { doc, pageRefs } of the current upload
+  const rendererRef = useRef(null);
+  const [thumbs, setThumbs] = useState({}); // pageIdx → dataURL
+  const thumbGen = useRef(0); // bumped on every new upload: stale renders stop
+  const thumbQ = useRef({ pending: [], queued: new Set(), running: false });
+  const requestThumb = useCallback((pageIdx) => {
+    const q = thumbQ.current;
+    if (q.queued.has(pageIdx) || !pdfDocRef.current || !rendererRef.current) return;
+    q.queued.add(pageIdx);
+    q.pending.push(pageIdx);
+    if (q.running) return;
+    q.running = true;
+    const gen = thumbGen.current;
+    (async () => {
+      while (q.pending.length) {
+        if (gen !== thumbGen.current || !pdfDocRef.current) break;
+        const idx = q.pending.shift();
+        try {
+          const cv = await rendererRef.current.renderPage(pdfDocRef.current.pageRefs[idx], 380);
+          if (cv && gen === thumbGen.current) {
+            let url = cv.toDataURL("image/webp", 0.85);
+            if (!url.startsWith("data:image/webp")) url = cv.toDataURL();
+            setThumbs((t) => (t[idx] ? t : { ...t, [idx]: url }));
+          }
+        } catch { /* the page keeps its placeholder card */ }
+        await new Promise((r) => setTimeout(r, 0)); // let the UI breathe between pages
+      }
+      q.running = false;
+    })();
+  }, []);
+
+  // high-resolution single-page render for the click-to-read zoom overlay
+  const renderZoomPage = useCallback(async (pageIdx, width = 1200) => {
+    if (!pdfDocRef.current || !rendererRef.current) return null;
+    try {
+      const cv = await rendererRef.current.renderPage(pdfDocRef.current.pageRefs[pageIdx], width);
+      let url = cv.toDataURL("image/webp", 0.9);
+      if (!url.startsWith("data:image/webp")) url = cv.toDataURL();
+      return url;
+    } catch { return null; }
+  }, []);
+
+  const isErrMsg = (msg) => /失敗|錯誤/.test(msg);
+  const addLog = (msg) => {
+    const d = new Date();
+    setLog((l) => [...l, { t: d.toLocaleTimeString("zh-TW", { hour12: false }), d: d.toLocaleDateString("zh-TW"), msg }]);
+    if (isErrMsg(msg)) setFold((f) => ({ ...f, s8: false })); // 出錯才展開處理紀錄
+  };
+
+  // ---------- file handlers ----------
+  function resetPdfState() {
+    thumbGen.current++;
+    pdfDocRef.current = null;
+    rendererRef.current = null;
+    setThumbs({});
+    thumbQ.current = { pending: [], queued: new Set(), running: false };
+  }
+
+  // load an unencrypted PDF into 壹區 (a fresh upload, or a decrypted file flowing back in)
+  async function loadPlainPdf(bytes, displayName, unlock = null) {
+    const doc = await PdfDoc.load(bytes);
+    const pageRefs = await doc.getPageRefs();
+    if (pageRefs.length > MAX_PAGES) throw new PdfError(`頁數過多（${pageRefs.length} 頁，上限 ${MAX_PAGES} 頁）`);
+    const pages = pageRefs.map((p) => {
+      const [x0, y0, x1, y1] = p.box;
+      const w = x1 - x0, h = y1 - y0;
+      return p.rotate % 180 === 0 ? { w, h, rotate: p.rotate } : { w: h, h: w, rotate: p.rotate };
+    });
+    // size summary
+    const tally = new Map();
+    for (const p of pages) {
+      const key = `${Math.round(p.w)}×${Math.round(p.h)}`;
+      tally.set(key, (tally.get(key) || 0) + 1);
+    }
+    const rotatedCount = pages.filter((p) => p.rotate !== 0).length;
+    resetPdfState();
+    setResult(null); setStale(false);
+    setPdfInfo({ name: displayName, bytes, pages, count: pages.length, tally: [...tally.entries()], rotatedCount, unlock });
+    pdfDocRef.current = { doc, pageRefs };
+    rendererRef.current = createRenderer(doc);
+    // 上傳 PDF 後展開參–捌（捌區可直接產出下載）；玖區維持收合；貳區僅在解密版本時展開
+    setFold((f) => ({ ...f, sScan: false, s2: false, s3: false, s4: false, s5: false, s6: false, s7: false, sPw: unlock ? false : f.sPw }));
+    setOutName(displayName.replace(/\.pdf$/i, "")); // 重新命名檔案 defaults to 原檔名
+    pdfInputKey.current++;
+    addLog(`載入 PDF「${displayName}」：${pages.length} 頁 · ${fmtBytes(bytes.length)}${rotatedCount ? ` · ${rotatedCount} 頁有旋轉` : ""}${unlock ? " · 已解密版本" : ""}`);
+    runScan(bytes);
+  }
+
+  // 貳區 檔案狀態：背景掃描，換檔時舊掃描作廢
+  async function runScan(bytes) {
+    const gen = ++scanGen.current;
+    setSan(SAN_DEFAULT);
+    setScan({ status: "scanning", done: 0, total: 0 });
+    try {
+      const report = await scanPdf(bytes, (done, total) => { if (gen === scanGen.current) setScan({ status: "scanning", done, total }); });
+      if (gen !== scanGen.current) return;
+      setScan({ status: "done", report });
+      setSan(sanDefaultsFor(report));
+      const found = [
+        report.meta.detected && "中繼資料", report.history.detected && "舊版本／未引用物件", report.js.detected && "JavaScript／自動動作",
+        report.attach.detected && "附件", report.links.detected && "連結", report.piece.detected && "PieceInfo／書籤",
+        report.exif.detected && "EXIF", report.annots.detected && "註解／表單", report.layers.detected && "隱藏圖層",
+        report.invisible.detected && "隱形文字", report.sig.detected && "數位簽章", report.hiddenText.detected && "疑似藏字",
+      ].filter(Boolean);
+      addLog(`檔案狀態掃描完成：${found.length ? `偵測到 ${found.join("、")}` : "沒有偵測到需要處理的項目"}`);
+      if (report.js.detected || report.attach.detected) addLog("警示：發現 JavaScript／附件／Launch 等主動內容，已預設勾選淨化");
+      if (report.sig.detected) addLog("提醒：原檔含數位簽章，用印後簽章必定失效，請先淨化再簽章");
+    } catch (e) {
+      if (gen !== scanGen.current) return;
+      setScan({ status: "error", msg: e.message || String(e) });
+      addLog("檔案狀態掃描失敗：" + (e.message || e));
+    }
+  }
+  function clearScan() { scanGen.current++; setScan(null); setSan(SAN_DEFAULT); }
+
+  // 淨化（產出時）：壓縮／灰階之後、用印之前
+  async function runSanitize(bytes) {
+    if (!sanActive(san)) return null;
+    setBusy("淨化文件…");
+    const r = await sanitizePdf(bytes, san, (msg) => setBusy(msg));
+    const s = r.stats;
+    const bits = [
+      san.meta && `中繼資料 ${s.metaRemoved} 處`, san.js && `主動內容 ${s.jsRemoved} 處`, san.attach && `附件 ${s.attachRemoved} 處`,
+      san.links !== "keep" && `連結 ${s.linksRemoved} 個`, san.piece && `PieceInfo ${s.pieceRemoved} 處`, san.outlines && s.outlinesRemoved && "書籤",
+      san.exif && `EXIF ${s.exifStripped} 張（省 ${fmtBytes(s.exifBytes)}）`,
+      san.flatten && `註解表單 ${s.annotsRemoved} 個（攤平 ${s.flattened}${s.flattenNoAP ? `，${s.flattenNoAP} 個無外觀` : ""}）`,
+      san.ocg && `隱藏圖層內容 ${s.ocSpans + s.ocDos} 段`, san.invisible && `隱形文字 ${s.invisibleText} 段`,
+    ].filter(Boolean);
+    addLog(`淨化完成：${bits.join(" · ")}${bits.length ? " · " : ""}物件 ${s.objectsBefore} → ${s.objectsAfter}（只保留現行版本）· ${fmtBytes(bytes.length)} → ${fmtBytes(r.bytes.length)}`);
+    if (s.contentSkipped) addLog(`注意：${s.contentSkipped} 個內容流使用不支援的壓縮格式，未做圖層／隱形文字淨化`);
+    return { bytes: r.bytes, desc: sanSummary(san) };
+  }
+
+  function unloadPdf() {
+    resetPdfState();
+    clearScan();
+    setPdfInfo(null); setResult(null); setStale(false);
+    setFold((f) => ({ ...f, ...FOLD_PRE_UPLOAD, s1: false, s7: false })); // 卸下 PDF：回到上傳前的收合狀態
+  }
+
+  async function handlePdf(file) {
+    setError(null); setResult(null); setStale(false);
+    setLocked(null);
+    resetPdfState();
+    clearScan();
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const displayName = repairMojibake(file.name);
+      try {
+        await loadPlainPdf(bytes, displayName);
+      } catch (e) {
+        if (!(e instanceof PdfError && e.message === "ENCRYPTED")) throw e;
+        setPdfInfo(null);
+        let probe;
+        try { probe = await probeEncryption(bytes); }
+        catch (pe) {
+          throw new PdfError(pe.message === "UNSUPPORTED_SECURITY" ? "這份 PDF 使用憑證或非標準加密，無法在瀏覽器內解除。" : "無法讀取加密設定：" + (pe.message || pe));
+        }
+        addLog(`偵測到加密 PDF「${displayName}」：${probe.algo} · ${probe.ownerOnly ? `僅設權限密碼${probe.denied.length ? `（禁止${probe.denied.join("、")}）` : ""}` : "需要開啟密碼"}`);
+        await applyLocked({ name: displayName, bytes, probe, stage: null, pwError: null, cached: null }, { pw: unlockPw, perm: unlockPerm });
+      }
+    } catch (e) {
+      setPdfInfo(null);
+      const msg = e instanceof PdfError && e.message !== "ENCRYPTED" && !/^[A-Za-z]/.test(e.message) ? e.message : "無法解析這份 PDF：" + (e.message || e);
+      setError(msg);
+      addLog("PDF 載入失敗：" + msg);
+    }
+  }
+
+  // route an encrypted upload by the two 貳區 options: blocked / auto-unlock / ask for password
+  async function applyLocked(entry, flags) {
+    const kind = entry.probe.ownerOnly ? "perm" : "pw";
+    const allowed = kind === "perm" ? flags.perm : flags.pw;
+    if (!allowed) {
+      unloadPdf();
+      setLocked({ ...entry, stage: kind === "perm" ? "blocked-perm" : "blocked-pw", pwError: null });
+      return;
+    }
+    if (entry.cached) {
+      setLocked({ ...entry, stage: "unlocked" });
+      await loadPlainPdf(entry.cached.bytes, entry.name, entry.cached.unlock);
+      return;
+    }
+    if (kind === "pw") {
+      unloadPdf();
+      setLocked({ ...entry, stage: "need-pw", pwError: null });
+      setTimeout(() => pwInputRef.current?.focus(), 60);
+      return;
+    }
+    await unlockWith(entry, "");
+  }
+
+  async function unlockWith(entry, password) {
+    setLocked({ ...entry, stage: "working", pwError: null });
+    await new Promise((r) => setTimeout(r, 30)); // let 「解密中…」 paint first
+    try {
+      const dec = await decryptPdf(entry.bytes, password);
+      if (!dec) {
+        setLocked({ ...entry, stage: "need-pw", pwError: "密碼不正確，請再試一次。" });
+        addLog("解除密碼失敗：密碼不正確");
+        setTimeout(() => { pwInputRef.current?.focus(); pwInputRef.current?.select(); }, 60);
+        return;
+      }
+      const unlock = { kind: entry.probe.ownerOnly ? "perm" : "pw", algo: dec.algo, as: dec.as, denied: dec.denied };
+      const next = { ...entry, stage: "unlocked", pwError: null, cached: { bytes: dec.bytes, unlock } };
+      setLocked(next);
+      addLog(unlock.kind === "perm"
+        ? `已自動解除權限限制（${dec.algo}${dec.denied.length ? `；原檔禁止${dec.denied.join("、")}` : ""}），未加密版本回到壹區`
+        : `已用${dec.as === "owner" ? "擁有者" : "開啟"}密碼解密（${dec.algo}），未加密版本回到壹區`);
+      await loadPlainPdf(dec.bytes, entry.name, unlock);
+    } catch (e) {
+      // surface the failure on the card itself too, so 解除密碼 never looks like it did nothing
+      setLocked({ ...entry, stage: entry.probe.ownerOnly ? "blocked-perm" : "need-pw", pwError: "解密失敗：" + (e.message || e) });
+      setError("解密失敗：" + (e.message || e));
+      addLog("解密失敗：" + (e.message || e));
+    }
+  }
+
+  // 貳區 option toggled while an encrypted upload is pending/unlocked → 回流壹區
+  function toggleUnlock(which, value) {
+    const flags = { pw: which === "pw" ? value : unlockPw, perm: which === "perm" ? value : unlockPerm };
+    if (which === "pw") setUnlockPw(value); else setUnlockPerm(value);
+    const entry = lockedRef.current;
+    if (!entry) return;
+    const kind = entry.probe.ownerOnly ? "perm" : "pw";
+    if (kind !== which) return;
+    const label = which === "pw" ? "移除密碼後加印騎縫章或浮水印" : "移除權限控制";
+    addLog(value ? `勾選「${label}」：回到壹區處理加密文件` : `取消「${label}」：已卸下解密後的文件`);
+    setError(null);
+    setFold((f) => ({ ...f, s1: false }));
+    applyLocked(entry, flags);
+    setTimeout(() => s1Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+  }
+
+  async function handleSeal(file) {
+    // 統一只在壹區 PDF 框處理 PDF：丟進印章框的 PDF 自動改走 PDF 上傳
+    if (file && (file.type === "application/pdf" || /\.pdf$/i.test(file.name))) {
+      addLog("印章框收到 PDF，已改當作文件上傳");
+      return handlePdf(file);
+    }
+    setError(null); setResult(null); setStale(false);
+    try {
+      const raw = await loadSealCanvas(file);
+      // small preview of the untrimmed original, for the scissor-cut transition
+      const pk = Math.min(1, 240 / Math.max(raw.width, raw.height));
+      let origUrl;
+      if (pk < 1) {
+        const pc = document.createElement("canvas");
+        pc.width = Math.round(raw.width * pk); pc.height = Math.round(raw.height * pk);
+        pc.getContext("2d").drawImage(raw, 0, 0, pc.width, pc.height);
+        origUrl = pc.toDataURL();
+      } else {
+        origUrl = raw.toDataURL();
+      }
+      const { canvas, trimmed, downscaled, bgRemoved } = prepSealCanvas(raw);
+      setSeal({
+        canvas, url: canvas.toDataURL(), origUrl,
+        info: { origW: trimmed.origW, origH: trimmed.origH, w: canvas.width, h: canvas.height, trimmed: trimmed.trimmed, downscaled, bgRemoved, bytes: file.size },
+      });
+      addLog(`載入印章圖片「${repairMojibake(file.name)}」：${trimmed.origW}×${trimmed.origH} → ${canvas.width}×${canvas.height}px${downscaled ? " · 已縮小以加速處理" : ""}${bgRemoved ? " · 已去除白色背景" : ""}`);
+    } catch (e) {
+      setSeal(null);
+      setError("無法讀取印章圖片：" + (e.message || e));
+      addLog("印章圖片載入失敗：" + (e.message || e));
+    }
+  }
+
+  // grayscale variant of the uploaded seal (alpha preserved); null until a seal exists
+  const sealCanvas = useMemo(() => {
+    if (!seal) return null;
+    let c = grayscale ? toGrayscale(seal.canvas) : seal.canvas;
+    if (sealOpacity < 100) c = applyOpacity(c, sealOpacity);
+    return c;
+  }, [seal, grayscale, sealOpacity]);
+
+  // ---------- planning ----------
+  const basePlan = useMemo(() => {
+    if (!pdfInfo || !seal || !sealCanvas || !method) return null;
+    const rng = mulberry32(seed);
+    const pages = pdfInfo.pages;
+    const N = pages.length;
+    const labels = buildLabels(N, lang, align, undefined, labelSize);
+    const labelHeightPt = (LABEL_ASCENT + LABEL_DESCENT) * labelSize;
+    const rLo = Math.min(rotMin, rotMax), rHi = Math.max(rotMin, rotMax);

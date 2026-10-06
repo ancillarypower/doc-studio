@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      CI: "true"
+      FORCE_COLOR: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      # no lockfile is committed yet (phase A); phase B pins one and switches to --frozen-lockfile
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - name: Unit + engine tests (generates fixtures/)
+        run: pnpm test
+      - name: Build the port
+        run: pnpm build
+      - name: Build the visual baseline (original artifact source)
+        run: pnpm build:reference
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Smoke, axe and per-section visual diff
+        run: |
+          set -o pipefail
+          pnpm e2e 2>&1 | tee e2e.log
+      - name: Visual + axe report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: visual-report
+          path: |
+            visual-report/
+            playwright-report/
+            e2e.log
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Build report
+        if: always()
+        run: |
+          {
+            echo "### CI report · \`${GITHUB_SHA::7}\` · ${{ job.status }}"
+            echo
+            echo "**Visual gate** (pixel ≤ 2% · layout ±4px)"
+            echo '```'
+            cat visual-report/summary.txt 2>/dev/null || echo "no visual summary (the visual spec did not finish)"
+            echo '```'
+            echo "**axe** (critical/serious added vs. the artifact)"
+            echo '```json'
+            node -e 'try{const r=require("./visual-report/axe-report.json");console.log(JSON.stringify({added:r.added,inherited:r.inherited.map(v=>v.id+":"+v.nodes)},null,1))}catch{console.log("no axe report")}'
+            echo '```'
+            echo "<details><summary>e2e log (last 150 lines)</summary>"
+            echo
+            echo '```'
+            tail -n 150 e2e.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo "no e2e log"
+            echo '```'
+            echo "</details>"
+          } > ci-report.md
+          cat ci-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on the PR
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file ci-report.md --edit-last --create-if-none || gh pr comment "${{ github.event.pull_request.number }}" --body-file ci-report.md
