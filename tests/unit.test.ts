@@ -33,12 +33,18 @@ describe("fixtures × engine", () => {
     const all = { meta: true, history: true, js: true, attach: true, links: "all", piece: true, outlines: true, exif: true, flatten: true, ocg: true, invisible: true };
     const s = await sanitizePdf(load("all-triggers.pdf"), all);
     const r = await scanPdf(s.bytes);
-    for (const k of KEYS.filter((k) => k !== "meta" && k !== "hiddenText")) expect(r[k].detected, k).toBe(false);
-    // hiddenText is report-only (僅提醒). meta: fields and XMP are gone, but the scanner still
-    // counts the regenerated /ID as metadata — known artifact behaviour, kept in phase A.
+    // hiddenText is report-only (僅提醒), so it is the only category allowed to survive a full purge
+    for (const k of KEYS.filter((k) => k !== "hiddenText")) expect(r[k].detected, k).toBe(false);
+    // #7: purging metadata drops the trailer /ID instead of regenerating it, so 中繼資料 rescans clean
     expect(r.meta.fields).toEqual([]);
     expect(r.meta.xmpCount).toBe(0);
+    expect(r.meta.hasId).toBe(false);
+  });
+  it("keeps the original /ID when metadata is not purged", async () => {
+    const s = await sanitizePdf(load("all-triggers.pdf"), { meta: false, js: true });
+    const r = await scanPdf(s.bytes);
     expect(r.meta.hasId).toBe(true);
+    expect(r.meta.detected).toBe(true);
   });
   it("encrypted.pdf: RC4-128, user password unlocks, wrong password does not", async () => {
     const e = load("encrypted.pdf");
