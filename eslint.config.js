@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 // Phase A keeps the artifact's code as-is, so only correctness rules fail CI; style findings warn.
 export default tseslint.config(
-  { ignores: ["dist", "reference", "src/pdf/**/*.js", "src/seal/**/*.js", "**/*.d.ts", "playwright-report", "test-results"] },
+  { ignores: ["dist", "reference", "src/pdf/**/*.js", "src/seal/**/*.js", "**/*.d.ts", "playwright-report", "test-results", "visual-report", "fixtures"] },
   {
     files: ["**/*.{ts,tsx}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -14,6 +14,7 @@ export default tseslint.config(
       "react-hooks/exhaustive-deps": "warn",
       "no-undef": "off",
       "no-empty": "warn",
+      "no-empty-pattern": "warn",
       "no-control-regex": "off",
       "no-useless-escape": "warn",
       "no-cond-assign": "warn",
