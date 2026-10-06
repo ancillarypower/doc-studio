@@ -13,6 +13,13 @@ test("loads without browser or network errors", async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
+// #2: the app is branded 文件工坊 (tab title and header)
+test("brand: title and header read 文件工坊", async ({ page }) => {
+  await openSettled(page, NEW_URL);
+  await expect(page).toHaveTitle("文件工坊");
+  await expect(page.locator('[data-section="header"] h1')).toHaveText("文件工坊");
+});
+
 test("all-triggers fixture: 貳區 lists every scanner finding", async ({ page }) => {
   await openSettled(page, NEW_URL);
   await uploadPdf(page, "fixtures/all-triggers.pdf");
