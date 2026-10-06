@@ -106,7 +106,7 @@ export default function ScanPanel({ scan, san, setSan }: { scan: ScanState | nul
         r.meta.xmpCount ? `XMP ${r.meta.xmpCount} 份${r.meta.xmpTool ? `（${r.meta.xmpTool}）` : ""}` : null,
         r.meta.hasId ? "文件 ID" : null,
       ].filter(Boolean).join(" · ")}
-      note="移除文件資訊（作者、軟體、時間）與 XMP，文件 ID 換成隨機值"
+      note="移除文件資訊（作者、軟體、時間）、XMP 與文件 ID"
       control={<Check checked={san.meta} onChange={(v) => set({ meta: v })}>移除</Check>}
     />
   ));

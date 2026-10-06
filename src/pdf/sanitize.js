@@ -3,7 +3,7 @@
 // 以及產出時的「淨化」：整份重寫，只寫出從文件根節點追得到的物件，物件重新編號。
 // All in memory, all in the browser. Content-stream edits only touch FlateDecode / unfiltered
 // streams; anything else is left alone and reported.
-import { PdfDoc, deflate, raw, serializeToBytes, strBytes } from "./pdf.js";
+import { PdfDoc, deflate, serializeToBytes, strBytes } from "./pdf.js";
 import { stringBytes } from "./crypt.js";
 
 const isRef = (v) => v && typeof v === "object" && typeof v.$ref === "number";
@@ -914,11 +914,9 @@ export async function sanitizePdf(bytes, opts, onProgress) {
   for (const off of offsets) xref += `${String(off).padStart(10, "0")} 00000 n\r\n`;
   const nt = { "/Size": order.length + 1, "/Root": remap(trailer["/Root"]) };
   if (keepInfo) nt["/Info"] = remap(trailer["/Info"]);
-  if (opts.meta) {
-    const rnd = crypto.getRandomValues(new Uint8Array(16));
-    const hex = raw("<" + [...rnd].map((x) => x.toString(16).padStart(2, "0")).join("") + ">");
-    nt["/ID"] = [hex, hex];
-  } else if (trailer["/ID"]) {
+  // 中繼資料 purge drops /ID outright (#7): a regenerated random /ID still reads as metadata on
+  // rescan, and PDF 1.7 only requires /ID for encrypted files, which this writer never produces
+  if (!opts.meta && trailer["/ID"]) {
     const id = R(trailer["/ID"]);
     if (Array.isArray(id)) nt["/ID"] = id.map((x) => R(x));
   }
