@@ -1,6 +1,8 @@
 // Shared types for the 文件工坊 UI.
 // The PDF / seal engines (src/pdf, src/seal) are still untyped JavaScript in phase A;
 // values that flow straight out of them are typed as EngineData until phase B adds real types.
+import type { ScanReport } from "./pdf/sanitize";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type EngineData = any;
 
@@ -18,4 +20,4 @@ export type SanBoolKey = Exclude<keyof SanOptions, "links">;
 export type ScanState =
   | { status: "scanning"; done?: number; total?: number }
   | { status: "error"; msg: string }
-  | { status: "done"; report: EngineData };
+  | { status: "done"; report: ScanReport };
