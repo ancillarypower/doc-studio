@@ -2,7 +2,7 @@
 // Sections read it through StudioContext, so the render tree can be split per 區 without prop drilling.
 import { type Align, type EngineData, type Lang, type Method, type SanOptions, type ScanState } from "../types";
 import { LABEL_ASCENT, LABEL_DESCENT } from "../pdf/font.js";
-import { MM, labelX, mulberry32, planPlacement } from "../seal/plan.js";
+import { MM, labelX, mulberry32, planPlacement, type PairNote, type SliceNote } from "../seal/plan.js";
 import { PdfDoc, PdfError, deflate } from "../pdf/pdf.js";
 import { SAN_DEFAULT, sanActive, sanDefaultsFor, sanSummary } from "../components/ScanPanel";
 import { applyOpacity, canvasToPdfImage, halfBoundaries, inkCoverage, loadSealCanvas, rotateQuarter, rotateSeal, sliceBoundaries, splitVertical, toGrayscale } from "../seal/image.js";
@@ -425,7 +425,7 @@ export function useStudio() {
       const pagesPlan: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
       const diagram: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
       const parts: EngineData[] = []; // canvases per seal part
-      res.notes.filter((n: EngineData) => n.type === "pair").forEach((note: EngineData) => {
+      res.notes.filter((n): n is PairNote => n.type === "pair").forEach((note) => {
         const i = note.pair - 1;
         const slot = note.slot ?? 0;
         const ri = i * sealCount + slot; // angleDraws index (conflicting pairs still consumed draws)
@@ -476,13 +476,13 @@ export function useStudio() {
     }
     const worstH = Math.max(...strips.map((s) => s.hpt));
     const res = planPlacement({ pages, seal: { w: N2 * sliceWmm * MM, h: worstH }, method, ...planOpts });
-    const sliceNotes = res.notes.filter((n: EngineData) => n.type === "slices");
+    const sliceNotes = res.notes.filter((n): n is SliceNote => n.type === "slices");
     const pagesPlan: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
     const diagram: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
     const parts: EngineData[] = [];
     const blanksSet = new Set<number>();
     strips.forEach((st, j) => {
-      const note = sliceNotes.find((n: EngineData) => (n.slot ?? 0) === j);
+      const note = sliceNotes.find((n) => (n.slot ?? 0) === j);
       if (!note) return;
       const slices = splitVertical(st.rot, sliceBoundaries(st.rot.width, N2));
       slices.forEach((c: HTMLCanvasElement, i: number) => { if (inkCoverage(c) < 0.005) blanksSet.add(i + 1); });

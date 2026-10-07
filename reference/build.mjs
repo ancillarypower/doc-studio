@@ -3,7 +3,7 @@
 // React 18.2, and the compiled stylesheet captured from the runtime build (artifact.css).
 // Output: reference/build/index.html (+ app.js), served by CI next to the new build.
 import { build } from "esbuild";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,14 +30,21 @@ await build({
       }));
     },
   }, {
-    // The artifact's PDF / seal engines are byte-identical to src/pdf and src/seal (the port does not
-    // touch them), so the reference build reads them from there instead of keeping a second copy.
+    // The artifact's PDF / seal engines are shared with src/pdf and src/seal, so the reference build
+    // reads them from there instead of keeping a second copy. Phase B (#4) converts those engines to
+    // TypeScript file by file: once `x.js` is gone, the artifact's `x.js` import falls back to `x.ts`.
+    // esbuild only strips the type annotations, so the baseline still runs the same engine code.
     name: "shared-engines",
     setup(b) {
+      const engine = (rel) => {
+        const p = join(here, "..", "src", rel);
+        const ts = p.replace(/\.js$/, ".ts");
+        return { path: !existsSync(p) && ts !== p && existsSync(ts) ? ts : p };
+      };
       b.onResolve({ filter: /^\.\/(pdf|seal)\// }, (a) =>
-        a.importer.includes(`${"artifact"}/src`) ? { path: join(here, "..", "src", a.path.slice(2)) } : undefined);
+        a.importer.includes(`${"artifact"}/src`) ? engine(a.path.slice(2)) : undefined);
       b.onResolve({ filter: /^\.\.\/(pdf|seal)\// }, (a) =>
-        a.importer.includes(`${"artifact"}/src/components`) ? { path: join(here, "..", "src", a.path.slice(3)) } : undefined);
+        a.importer.includes(`${"artifact"}/src/components`) ? engine(a.path.slice(3)) : undefined);
     },
   }],
 });

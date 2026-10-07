@@ -1,14 +1,40 @@
 // Orchestrates: parse PDF, embed font + seal images, overlay seals + page numbers, verify.
-import { PdfDoc, PdfUpdate, PdfError, deflate, pdfString, ref, serializeToBytes } from "../pdf/pdf.js";
+import type { Align, Lang } from "../types";
+import { PdfDoc, PdfUpdate, deflate } from "../pdf/pdf.js";
 import { buildFont, encodeText, textWidth, labelText, LABEL_ASCENT, LABEL_DESCENT } from "../pdf/font.js";
 import { MM, planPlacement, mulberry32 } from "./plan.js";
+import type { PdfImage } from "./image.js";
 
 export const LABEL_SIZE = 9;
 export const LABEL_FONT = "/SealF1";
 
-function fmt(n) { return String(parseFloat(n.toFixed(3))); }
+// A PDF dictionary as handed out by the pdf engine. Values stay opaque here: this module only
+// copies keys between dictionaries and checks the engine's $ref / $raw / $stream markers.
+type PdfDict = Record<string, unknown>;
 
-function overlayRotationPrefix(box, rotate) {
+// one embedded seal image, deduplicated by key
+export interface SealImage extends PdfImage { key: string }
+
+// what the overlay draws on one page (pt, visual space)
+export interface OverlaySeal { imgKey: string; x: number; y: number; w: number; h: number }
+export interface OverlayLabel { text: string; x: number; yBottom: number; w: number; size?: number; rot?: number }
+export interface OverlayPage { seals: OverlaySeal[]; label: OverlayLabel | null }
+
+export interface GenerateOptions {
+  pdfBytes: Uint8Array;
+  pagesPlan: OverlayPage[];
+  sealImages: SealImage[];
+  lang: Lang;
+  onProgress?: (done: number, total: number) => void;
+}
+
+export interface GenerateResult { bytes: Uint8Array; verified: boolean; pageCount: number; originalPageCount: number }
+
+export interface LabelSpec { text: string; w: number }
+
+function fmt(n: number): string { return String(parseFloat(n.toFixed(3))); }
+
+function overlayRotationPrefix(box: number[], rotate: number): string | null {
   const [x0, y0, x1, y1] = box;
   const w = x1 - x0, h = y1 - y0;
   let m;
@@ -25,9 +51,8 @@ function overlayRotationPrefix(box, rotate) {
 // an appended stream otherwise inherits that transform: labels flip and all
 // planned coordinates are mirrored. Return the inverse of the first base cm
 // when it is clearly a page-level transform.
-async function inheritedBaseReset(doc, contents) {
-  let first = contents;
-  if (Array.isArray(first)) first = first[0];
+async function inheritedBaseReset(doc: PdfDoc, contents: unknown): Promise<string | null> {
+  let first = (Array.isArray(contents) ? contents[0] : contents) as PdfDict | null | undefined;
   if (first?.$ref !== undefined) first = await doc.resolve(first);
   if (!first?.$stream) return null;
   const bytes = await doc.decodeStream(first);
@@ -48,20 +73,20 @@ async function inheritedBaseReset(doc, contents) {
 }
 
 // Merge our font + images into the page's (possibly inherited) resources.
-function mergeResources(origResources, fontRef, imageRefs) {
-  const res = {};
+function mergeResources(origResources: PdfDict | null | undefined, fontRef: unknown, imageRefs: unknown[]) {
+  const res: PdfDict = {};
   if (origResources && typeof origResources === "object" && !origResources.$raw) {
     for (const k of Object.keys(origResources)) {
       if (k !== "/Font" && k !== "/XObject") res[k] = origResources[k];
     }
   }
-  const fontDict = {};
-  const origFont = origResources?.["/Font"];
+  const fontDict: PdfDict = {};
+  const origFont = origResources?.["/Font"] as PdfDict | undefined;
   if (origFont && typeof origFont === "object" && !origFont.$raw && !origFont.$ref) {
     for (const k of Object.keys(origFont)) fontDict[k] = origFont[k];
   }
-  const xoDict = {};
-  const origXo = origResources?.["/XObject"];
+  const xoDict: PdfDict = {};
+  const origXo = origResources?.["/XObject"] as PdfDict | undefined;
   if (origXo && typeof origXo === "object" && !origXo.$raw && !origXo.$ref) {
     for (const k of Object.keys(origXo)) xoDict[k] = origXo[k];
   }
@@ -69,7 +94,7 @@ function mergeResources(origResources, fontRef, imageRefs) {
   let n = 1;
   while (fontDict[fname]) fname = "/SealF" + ++n;
   fontDict[fname] = fontRef;
-  const imgNames = [];
+  const imgNames: string[] = [];
   for (let i = 0; i < imageRefs.length; i++) {
     let iname = "/SealIm" + i;
     let m = i;
@@ -82,7 +107,7 @@ function mergeResources(origResources, fontRef, imageRefs) {
   return { res, fontName: fname, imgNames };
 }
 
-export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, lang, onProgress }) {
+export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, onProgress }: GenerateOptions): Promise<GenerateResult> {
   // sealImages: [{key, w, h, rgb(deflated), mask(deflated|null)}]
   // pagesPlan: [{seals: [{imgKey, x, y, w, h}], label: {text, x, yBottom, w}}]
   const doc = await PdfDoc.load(pdfBytes);
@@ -91,7 +116,7 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, lang,
   const fontRef = await buildFont(update);
 
   // embed images (dedupe by key)
-  const refByKey = new Map();
+  const refByKey = new Map<string, ReturnType<PdfUpdate["addStream"]>>();
   for (const img of sealImages) {
     if (refByKey.has(img.key)) continue;
     let maskRef = null;
@@ -101,7 +126,7 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, lang,
         img.mask
       );
     }
-    const dict = {
+    const dict: PdfDict = {
       "/Type": "/XObject", "/Subtype": "/Image", "/Width": img.w, "/Height": img.h,
       "/ColorSpace": "/DeviceRGB", "/BitsPerComponent": 8, "/Filter": "/FlateDecode", "/Length": img.rgb.length,
     };
@@ -116,13 +141,13 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, lang,
     let origContents = page.dict["/Contents"];
     const baseReset = await inheritedBaseReset(doc, origContents);
     const prefix = overlayRotationPrefix(page.box, page.rotate);
-    const parts = [];
+    const parts: string[] = [];
     parts.push("q\n");
     if (baseReset) parts.push(baseReset + "\n");
     if (prefix) parts.push(prefix + "\n");
     // seal parts for this page
-    const imgRefs = [];
-    const placements = [];
+    const imgRefs: unknown[] = [];
+    const placements: OverlaySeal[] = [];
     for (const s of plan.seals) {
       imgRefs.push(refByKey.get(s.imgKey));
       placements.push(s);
@@ -174,7 +199,7 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, lang,
       const c = await doc.resolve(origContents);
       if (Array.isArray(c)) origContents = c;
     }
-    let newContents;
+    let newContents: unknown;
     if (Array.isArray(origContents)) newContents = [...origContents, overlayRef];
     else if (origContents) newContents = [origContents, overlayRef];
     else newContents = overlayRef;
@@ -196,8 +221,9 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, lang,
   return { bytes: outBytes, verified, pageCount: pages.length, originalPageCount: pages.length };
 }
 
-export function buildLabels(pageCount, lang, align, pageWidths, size = LABEL_SIZE) {
-  const labels = [];
+// align / pageWidths are accepted for call-site compatibility; label widths do not depend on them
+export function buildLabels(pageCount: number, lang: Lang, align: Align, pageWidths?: number[], size = LABEL_SIZE): LabelSpec[] {
+  const labels: LabelSpec[] = [];
   for (let i = 0; i < pageCount; i++) {
     const text = labelText(i + 1, pageCount, lang);
     const w = textWidth(text, size);
