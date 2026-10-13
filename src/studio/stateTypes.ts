@@ -1,3 +1,4 @@
+import type { ProbeResult } from "../pdf/crypt";
 import { type EngineData } from "../types";
 
 // 目標大小：數值 + 單位 → bytes；各單位的合理範圍與預設值
@@ -18,7 +19,7 @@ export interface PdfInfo {
 export interface SealState { canvas: HTMLCanvasElement; url: string; origUrl?: string; info: EngineData }
 
 export interface LockedState {
-  name: string; bytes: Uint8Array; probe: EngineData; stage: string;
+  name: string; bytes: Uint8Array; probe: ProbeResult; stage: string;
   pwError?: string | null; cached?: { bytes: Uint8Array; unlock: EngineData } | null;
 }
 

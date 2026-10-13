@@ -30,7 +30,7 @@ describe("fixtures × engine", () => {
     expect(r.exif.gps).toBe(1);
   });
   it("full purge clears every category it has an option for", async () => {
-    const all = { meta: true, history: true, js: true, attach: true, links: "all", piece: true, outlines: true, exif: true, flatten: true, ocg: true, invisible: true };
+    const all = { meta: true, history: true, js: true, attach: true, links: "all" as const, piece: true, outlines: true, exif: true, flatten: true, ocg: true, invisible: true };
     const s = await sanitizePdf(load("all-triggers.pdf"), all);
     const r = await scanPdf(s.bytes);
     // hiddenText is report-only (僅提醒), so it is the only category allowed to survive a full purge

@@ -24,6 +24,7 @@ export class PdfDoc {
     trailer: any;
     cache: Map<any, any>;
     objStmCache: Map<any, any>;
+    crypt?: import("./crypt.js").PdfCrypt;
     readXrefChain(pos: any): Promise<void>;
     readXrefAt(pos: any): Promise<{
         entries: Map<any, any>;
