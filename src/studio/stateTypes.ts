@@ -1,4 +1,5 @@
 import type { ProbeResult } from "../pdf/crypt";
+import type { PostprocessStats } from "../pdf/postprocess";
 import { type EngineData } from "../types";
 
 // 目標大小：數值 + 單位 → bytes；各單位的合理範圍與預設值
@@ -30,7 +31,7 @@ export interface LogEntry { t: string; d?: string; msg: string }
 export type FoldState = Record<string, boolean>;
 
 // document post-processing pass (grayscale / JPEG re-encode) result
-export interface PpResult { bytes: Uint8Array; stats: EngineData; q: number; scale: number; target: number; reached?: boolean }
+export interface PpResult { bytes: Uint8Array; stats: PostprocessStats; q: number; scale: number; target: number; reached?: boolean }
 
 // per-page placement record (pt, visual space); seals carry imgKey (PDF) or dataURL (diagram)
 export interface PlanPage { seals: EngineData[]; label: EngineData }
