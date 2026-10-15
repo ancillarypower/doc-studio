@@ -6,8 +6,10 @@
 // scale a bar reads the same; invisible text (Tr 3) stays invisible.
 // Anything unsupported is skipped per-operator; a page that fails outright
 // returns null and the diagram keeps its placeholder card.
+import type { PdfDoc } from "./pdf.js";
+import type { PdfDict, PdfPageRef, PdfRaw, PdfRef, PdfValue } from "./types";
 
-const lat1 = (bytes) => { let s = ""; const CH = 0x8000; for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode(...bytes.subarray(i, i + CH)); return s; };
+const lat1 = (bytes: Uint8Array) => { let s = ""; const CH = 0x8000; for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode(...bytes.subarray(i, i + CH)); return s; };
 
 // ---------- content-stream tokenizer ----------
 // Flat op list: [{ op, args:[tok...] }]; tok = {n} | {name:"/Foo"} | {str:Uint8Array} | {arr:[tok]} | {img:{dict,data}} | true | false | null
@@ -15,10 +17,36 @@ const WS = new Set([0, 9, 10, 12, 13, 32]);
 const DELIM = new Set([40, 41, 60, 62, 91, 93, 123, 125, 47, 37]);
 const NUM_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
 
-function readLiteralString(src, i) {
+// Operand tokens. The tokenizer also pushes bare `true` / `false` / `null` (and an unmatched "[" marker
+// can stay on the stack); every reader probes operands with `t && t.x`, which reads `undefined` on those,
+// so they travel through the same Tok-typed slots, the way the JavaScript treats them.
+interface InlineImage { dict: PdfDict; data: Uint8Array }
+interface Tok { n?: number; name?: string; str?: Uint8Array; arr?: Tok[]; img?: InlineImage }
+type Operand = Tok | boolean | null | string;
+interface Op { op: string; args: Tok[] }
+
+// /ColorSpace resolved to what the painter needs: component count, plus base + palette for /Indexed
+// and the underlying space for /Pattern.
+interface CsInfo {
+  kind: "gray" | "rgb" | "cmyk" | "lab" | "pattern" | "indexed" | "separation";
+  comps: number; base?: CsInfo; pal?: Uint8Array | null;
+}
+// /Indexed lookup: a byte string or a reference to a stream (ISO 32000-1 §8.6.6.3)
+type PaletteLookup = PdfRaw | PdfRef | null | undefined;
+// decoded image canvases; stencil masks are tinted with the fill color at paint time
+type StencilCanvas = HTMLCanvasElement & { _isStencil?: boolean };
+interface FontInfo { cid: boolean }
+interface RenderState {
+  fill: number[]; stroke: number[]; fillCS: string; strokeCS: string; fillA: number; strokeA: number;
+  tm: number[]; tlm: number[]; fontInfo: FontInfo; fontSize: number;
+  charSpace: number; wordSpace: number; hScale: number; leading: number; render: number; rise: number;
+  curX: number; curY: number; stack: RenderState[];
+}
+
+function readLiteralString(src: Uint8Array, i: number) {
   const n = src.length;
   i++;
-  const out = [];
+  const out: number[] = [];
   let depth = 1;
   while (i < n && depth > 0) {
     const ch = src[i];
@@ -44,7 +72,7 @@ function readLiteralString(src, i) {
   return { bytes: new Uint8Array(out), next: i };
 }
 
-function readHexString(src, i) {
+function readHexString(src: Uint8Array, i: number) {
   const n = src.length;
   i++;
   let hex = "";
@@ -56,14 +84,14 @@ function readHexString(src, i) {
   return { bytes: out, next: i };
 }
 
-const II_KEY = { "/W": "/Width", "/H": "/Height", "/BPC": "/BitsPerComponent", "/CS": "/ColorSpace", "/F": "/Filter", "/DP": "/DecodeParms", "/IM": "/ImageMask", "/D": "/Decode" };
-const II_FILTER = { "/Fl": "/FlateDecode", "/AHx": "/ASCIIHexDecode", "/A85": "/ASCII85Decode", "/LZW": "/LZWDecode", "/CCF": "/CCITTFaxDecode", "/DCT": "/DCTDecode", "/JPX": "/JPXDecode", "/JBIG2": "/JBIG2Decode", "/RL": "/RunLengthDecode" };
-const II_CS = { "/G": "/DeviceGray", "/RGB": "/DeviceRGB", "/CMYK": "/DeviceCMYK", "/I": "/Indexed" };
+const II_KEY: Record<string, string> = { "/W": "/Width", "/H": "/Height", "/BPC": "/BitsPerComponent", "/CS": "/ColorSpace", "/F": "/Filter", "/DP": "/DecodeParms", "/IM": "/ImageMask", "/D": "/Decode" };
+const II_FILTER: Record<string, string> = { "/Fl": "/FlateDecode", "/AHx": "/ASCIIHexDecode", "/A85": "/ASCII85Decode", "/LZW": "/LZWDecode", "/CCF": "/CCITTFaxDecode", "/DCT": "/DCTDecode", "/JPX": "/JPXDecode", "/JBIG2": "/JBIG2Decode", "/RL": "/RunLengthDecode" };
+const II_CS: Record<string, string> = { "/G": "/DeviceGray", "/RGB": "/DeviceRGB", "/CMYK": "/DeviceCMYK", "/I": "/Indexed" };
 
-function tokenize(src) {
+function tokenize(src: Uint8Array): Op[] {
   const n = src.length;
-  const ops = [];
-  let stack = [];
+  const ops: Op[] = [];
+  let stack: Operand[] = [];
   let i = 0;
   const readWord = () => {
     const st = i;
@@ -71,14 +99,14 @@ function tokenize(src) {
     return lat1(src.subarray(st, i));
   };
   const skipWs = () => { while (i < n && WS.has(src[i])) i++; };
-  const readIIValue = () => {
+  const readIIValue = (): Tok | boolean | null => {
     skipWs();
     const c = src[i];
     if (c === 47) { i++; return { name: "/" + readWord() }; }
     if (c === 91) {
       i++;
-      const a = [];
-      for (;;) { skipWs(); if (src[i] === 93) { i++; return { arr: a }; } a.push(readIIValue()); }
+      const a: Tok[] = [];
+      for (;;) { skipWs(); if (src[i] === 93) { i++; return { arr: a }; } a.push(readIIValue() as Tok); }
     }
     const w = readWord();
     if (NUM_RE.test(w)) return { n: parseFloat(w) };
@@ -98,10 +126,10 @@ function tokenize(src) {
     if (c === 62) { i += (src[i + 1] === 62) ? 2 : 1; continue; }
     if (c === 91) { stack.push("["); i++; continue; }
     if (c === 93) {
-      const a = [];
-      while (stack.length && stack[stack.length - 1] !== "[") a.unshift(stack.pop());
+      const a: Operand[] = [];
+      while (stack.length && stack[stack.length - 1] !== "[") a.unshift(stack.pop()!);
       if (stack.length) stack.pop();
-      stack.push({ arr: a }); i++; continue;
+      stack.push({ arr: a as Tok[] }); i++; continue;
     }
     if (c === 47) { i++; stack.push({ name: "/" + readWord() }); continue; }
     const w = readWord();
@@ -111,10 +139,10 @@ function tokenize(src) {
     if (w === "false") { stack.push(false); continue; }
     if (w === "null") { stack.push(null); continue; }
     if (w === "BI") {
-      const rawDict = {};
+      const rawDict: Record<string, Tok> = {};
       for (;;) {
         skipWs();
-        if (src[i] === 47) { i++; const k = "/" + readWord(); rawDict[k] = readIIValue(); }
+        if (src[i] === 47) { i++; const k = "/" + readWord(); rawDict[k] = readIIValue() as Tok; }
         else { readWord(); break; } // consumes ID
       }
       i++; // exactly one whitespace byte follows ID
@@ -127,13 +155,13 @@ function tokenize(src) {
         }
       }
       if (end < 0) end = n;
-      const nd = {};
+      const nd: Record<string, Tok> = {};
       for (const k of Object.keys(rawDict)) {
         const nk = II_KEY[k] || k;
         let v = rawDict[k];
         if (nk === "/Filter" && v) {
-          const mapF = (f) => (f && f.name ? { name: II_FILTER[f.name] || f.name } : f);
-          v = v.arr ? v.arr.map(mapF) : mapF(v);
+          const mapF = (f: Tok): Tok => (f && f.name ? { name: II_FILTER[f.name] || f.name } : f);
+          v = (v.arr ? v.arr.map(mapF) : mapF(v)) as Tok;
         }
         if (nk === "/ColorSpace" && v) {
           if (v.name && II_CS[v.name]) v = { name: II_CS[v.name] };
@@ -141,37 +169,37 @@ function tokenize(src) {
         }
         nd[nk] = v;
       }
-      const flat = {};
+      const flat: PdfDict = {};
       for (const k of Object.keys(nd)) {
         const v = nd[k];
         if (v && v.n !== undefined) flat[k] = v.n;
         else if (v && v.name) flat[k] = v.name;
-        else if (v && v.arr) flat[k] = v.arr.map((x) => (x && x.n !== undefined ? x.n : x && x.name ? x.name : x));
-        else flat[k] = v;
+        else if (v && v.arr) flat[k] = v.arr.map((x) => (x && x.n !== undefined ? x.n : x && x.name ? x.name : (x as PdfValue)));
+        else flat[k] = v as PdfValue;
       }
       ops.push({ op: "__img__", args: [{ img: { dict: flat, data: src.slice(dStart, end) } }] });
       i = end + 2; // skip EI
       continue;
     }
-    ops.push({ op: w, args: stack });
+    ops.push({ op: w, args: stack as Tok[] });
     stack = [];
   }
   return ops;
 }
 
 // ---------- color helpers ----------
-const cmykToRgb = (c, m, y, k) => [
+const cmykToRgb = (c: number, m: number, y: number, k: number) => [
   255 * (1 - Math.min(1, c + k)),
   255 * (1 - Math.min(1, m + k)),
   255 * (1 - Math.min(1, y + k)),
 ];
-const BLEND = {
+const BLEND: Record<string, GlobalCompositeOperation> = {
   "/Normal": "source-over", "/Multiply": "multiply", "/Screen": "screen", "/Overlay": "overlay",
   "/Darken": "darken", "/Lighten": "lighten", "/ColorDodge": "color-dodge", "/ColorBurn": "color-burn",
   "/HardLight": "hard-light", "/SoftLight": "soft-light", "/Difference": "difference", "/Exclusion": "exclusion",
 };
 
-async function paletteBytes(doc, lk) {
+async function paletteBytes(doc: PdfDoc, lk: PaletteLookup): Promise<Uint8Array | null> {
   if (!lk) return null;
   if (lk.$raw) {
     const b = lk.$raw instanceof Uint8Array ? lk.$raw : new TextEncoder().encode(lk.$raw);
@@ -192,7 +220,7 @@ async function paletteBytes(doc, lk) {
 }
 
 // /ColorSpace value (name, array, or resource-dict name) → { kind, comps, ... }
-async function resolveCS(doc, res, cs) {
+async function resolveCS(doc: PdfDoc, res: PdfDict | null, cs: PdfValue): Promise<CsInfo> {
   cs = await doc.resolve(cs);
   if (typeof cs === "string") {
     if (cs === "/DeviceGray") return { kind: "gray", comps: 1 };
@@ -218,7 +246,7 @@ async function resolveCS(doc, res, cs) {
     }
     if (t === "/Indexed") {
       const base = await resolveCS(doc, res, cs[1]);
-      const pal = await paletteBytes(doc, cs[3]);
+      const pal = await paletteBytes(doc, cs[3] as PaletteLookup);
       return { kind: "indexed", comps: 1, base, pal };
     }
     if (t === "/Separation") return { kind: "separation", comps: 1 };
@@ -231,7 +259,7 @@ async function resolveCS(doc, res, cs) {
   return { kind: "rgb", comps: 3 };
 }
 
-function compsToRgb(csInfo, comps) {
+function compsToRgb(csInfo: CsInfo | null | undefined, comps: number[]): number[] {
   if (!csInfo) return [0, 0, 0];
   switch (csInfo.kind) {
     case "gray": { const g = (comps[0] ?? 0) * 255; return [g, g, g]; }
@@ -254,21 +282,24 @@ function compsToRgb(csInfo, comps) {
     default: return [0, 0, 0];
   }
 }
-const css = ([r, g, b]) => `rgb(${Math.round(Math.max(0, Math.min(255, r)))},${Math.round(Math.max(0, Math.min(255, g)))},${Math.round(Math.max(0, Math.min(255, b)))})`;
+const css = ([r, g, b]: number[]) => `rgb(${Math.round(Math.max(0, Math.min(255, r)))},${Math.round(Math.max(0, Math.min(255, g)))},${Math.round(Math.max(0, Math.min(255, b)))})`;
 
 // ---------- image decoding ----------
-async function decodeImageToCanvas(doc, res, dict, rawData, cache, cacheKey) {
-  if (cacheKey != null && cache.has(cacheKey)) return cache.get(cacheKey);
-  const finish = (v) => { if (cacheKey != null) cache.set(cacheKey, v); return v; };
-  const w = dict["/Width"], h = dict["/Height"];
+async function decodeImageToCanvas(
+  doc: PdfDoc, res: PdfDict | null, dict: PdfDict, rawData: Uint8Array,
+  cache: Map<number, StencilCanvas | null>, cacheKey: number | null,
+): Promise<StencilCanvas | null> {
+  if (cacheKey != null && cache.has(cacheKey)) return cache.get(cacheKey)!;
+  const finish = (v: StencilCanvas | null) => { if (cacheKey != null) cache.set(cacheKey, v); return v; };
+  const w = dict["/Width"] as number, h = dict["/Height"] as number;
   if (!w || !h || w > 8000 || h > 8000 || w * h > 24000000) return finish(null);
   const isMask = dict["/ImageMask"] === true;
-  const bpc = dict["/BitsPerComponent"] ?? (isMask ? 1 : 8);
+  const bpc = (dict["/BitsPerComponent"] ?? (isMask ? 1 : 8)) as number;
   let filter = dict["/Filter"];
   if (Array.isArray(filter)) { if (filter.length !== 1) return finish(null); filter = filter[0]; }
-  const cv = document.createElement("canvas");
+  const cv: StencilCanvas = document.createElement("canvas");
   cv.width = w; cv.height = h;
-  const cx = cv.getContext("2d");
+  const cx = cv.getContext("2d")!;
 
   if (filter === "/DCTDecode") {
     try {
@@ -340,7 +371,7 @@ async function decodeImageToCanvas(doc, res, dict, rawData, cache, cacheKey) {
         if (smCv) {
           const tmp = document.createElement("canvas");
           tmp.width = w; tmp.height = h;
-          const tx = tmp.getContext("2d");
+          const tx = tmp.getContext("2d")!;
           tx.drawImage(smCv, 0, 0, w, h);
           const sd = tx.getImageData(0, 0, w, h).data;
           const main = cx.getImageData(0, 0, w, h);
@@ -355,19 +386,19 @@ async function decodeImageToCanvas(doc, res, dict, rawData, cache, cacheKey) {
 }
 
 // ---------- renderer ----------
-export function createRenderer(doc) {
-  const imgCache = new Map();  // image object num → canvas | null
-  const csCache = new Map();   // color-space name → resolved info
-  const fontCache = new Map(); // font object num → { cid }
+export function createRenderer(doc: PdfDoc) {
+  const imgCache = new Map<number, StencilCanvas | null>();  // image object num → canvas | null
+  const csCache = new Map<string, CsInfo>();   // color-space name → resolved info
+  const fontCache = new Map<number, FontInfo>(); // font object num → { cid }
 
-  const num = (t) => (t && t.n !== undefined ? t.n : typeof t === "number" ? t : 0);
+  const num = (t: Tok | undefined): number => (t && t.n !== undefined ? t.n : typeof t === "number" ? t : 0);
 
-  async function lookupFont(res, name) {
+  async function lookupFont(res: PdfDict, name: string): Promise<FontInfo> {
     const fonts = res["/Font"] ? await doc.resolve(res["/Font"]) : null;
     const f = fonts ? fonts[name] : null;
     if (!f) return { cid: false };
     const refNum = f.$ref !== undefined ? f.$ref : null;
-    if (refNum != null && fontCache.has(refNum)) return fontCache.get(refNum);
+    if (refNum != null && fontCache.has(refNum)) return fontCache.get(refNum)!;
     let out = { cid: false };
     try {
       const fd = await doc.resolve(f);
@@ -377,14 +408,14 @@ export function createRenderer(doc) {
     return out;
   }
 
-  function paintImage(ctx, st, imgCv) {
+  function paintImage(ctx: CanvasRenderingContext2D, st: RenderState, imgCv: StencilCanvas) {
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, st.fillA));
     ctx.transform(1, 0, 0, -1, 0, 1); // image row 0 = top of the unit square
     if (imgCv._isStencil) {
       const t = document.createElement("canvas");
       t.width = imgCv.width; t.height = imgCv.height;
-      const tx = t.getContext("2d");
+      const tx = t.getContext("2d")!;
       tx.drawImage(imgCv, 0, 0);
       tx.globalCompositeOperation = "source-in";
       tx.fillStyle = css(st.fill);
@@ -396,11 +427,11 @@ export function createRenderer(doc) {
     ctx.restore();
   }
 
-  const pushState = (ctx, st) => {
+  const pushState = (ctx: CanvasRenderingContext2D, st: RenderState) => {
     ctx.save();
     st.stack.push({ ...st, tm: [...st.tm], tlm: [...st.tlm], stack: st.stack });
   };
-  const popState = (ctx, st) => {
+  const popState = (ctx: CanvasRenderingContext2D, st: RenderState) => {
     ctx.restore();
     const prev = st.stack.pop();
     if (prev) {
@@ -410,9 +441,9 @@ export function createRenderer(doc) {
     }
   };
 
-  async function execOps(ops, res, ctx, st, depth) {
+  async function execOps(ops: Op[], res: PdfDict, ctx: CanvasRenderingContext2D, st: RenderState, depth: number): Promise<void> {
     let path = new Path2D();
-    const setColor = async (isFill, compsTok) => {
+    const setColor = async (isFill: boolean, compsTok: Tok[]) => {
       const csName = isFill ? st.fillCS : st.strokeCS;
       let info = typeof csName === "string" ? csCache.get(csName) : null;
       if (!info) {
@@ -422,7 +453,7 @@ export function createRenderer(doc) {
       const rgb = compsToRgb(info, compsTok.map(num));
       if (isFill) st.fill = rgb; else st.stroke = rgb;
     };
-    const advanceTm = (adv) => {
+    const advanceTm = (adv: number) => {
       const [a, b, c, dd, e, f] = st.tm;
       st.tm = [a, b, c, dd, e + adv * a, f + adv * b];
     };
@@ -431,7 +462,7 @@ export function createRenderer(doc) {
       st.tlm = [a, b, c, dd, e - st.leading * c, f - st.leading * dd];
       st.tm = [...st.tlm];
     };
-    const showText = (bytes) => {
+    const showText = (bytes: Uint8Array) => {
       // displacement = (wEm*fs + Tc (+Tw for spaces)) * hScale/100
       const cid = st.fontInfo.cid;
       const unit = cid ? 2 : 1;
@@ -501,8 +532,8 @@ export function createRenderer(doc) {
           case "Q": popState(ctx, st); break;
           case "cm": ctx.transform(num(args[0]), num(args[1]), num(args[2]), num(args[3]), num(args[4]), num(args[5])); break;
           case "w": ctx.lineWidth = Math.max(num(args[0]), 0.01); break;
-          case "J": ctx.lineCap = ["butt", "round", "square"][num(args[0])] || "butt"; break;
-          case "j": ctx.lineJoin = ["miter", "round", "bevel"][num(args[0])] || "miter"; break;
+          case "J": ctx.lineCap = (["butt", "round", "square"] as CanvasLineCap[])[num(args[0])] || "butt"; break;
+          case "j": ctx.lineJoin = (["miter", "round", "bevel"] as CanvasLineJoin[])[num(args[0])] || "miter"; break;
           case "M": ctx.miterLimit = num(args[0]); break;
           case "d": {
             const arr = args[0] && args[0].arr ? args[0].arr.map(num) : [];
@@ -598,7 +629,7 @@ export function createRenderer(doc) {
             break;
           }
           case "__img__": {
-            const im = args[0].img;
+            const im = args[0].img!;
             const cvImg = await decodeImageToCanvas(doc, res, im.dict, im.data, imgCache, null);
             if (cvImg) paintImage(ctx, st, cvImg);
             break;
@@ -609,7 +640,7 @@ export function createRenderer(doc) {
     }
   }
 
-  async function renderPage(pageRef, targetH = 380) {
+  async function renderPage(pageRef: PdfPageRef, targetH = 380): Promise<HTMLCanvasElement | null> {
     const [x0, y0, x1, y1] = pageRef.box;
     const bw = x1 - x0, bh = y1 - y0;
     const rot = ((pageRef.rotate % 360) + 360) % 360;
@@ -621,7 +652,7 @@ export function createRenderer(doc) {
     const ch = targetH;
     const cv = document.createElement("canvas");
     cv.width = cw; cv.height = ch;
-    const ctx = cv.getContext("2d");
+    const ctx = cv.getContext("2d")!;
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, cw, ch);
     // device px → visual pt (y-up) → user space via page rotation
@@ -637,7 +668,7 @@ export function createRenderer(doc) {
     let contents = pageRef.dict["/Contents"];
     contents = await doc.resolve(contents);
     const streams = Array.isArray(contents) ? contents : [contents];
-    const parts = [];
+    const parts: Uint8Array[] = [];
     for (const s of streams) {
       const v = await doc.resolve(s);
       if (v && v.$stream) parts.push(await doc.decodeStream(v));
@@ -649,7 +680,7 @@ export function createRenderer(doc) {
     let off = 0;
     for (const p of parts) { merged.set(p, off); off += p.length; merged[off++] = 10; }
     const ops = tokenize(merged);
-    const st = {
+    const st: RenderState = {
       fill: [0, 0, 0], stroke: [0, 0, 0],
       fillCS: "/DeviceGray", strokeCS: "/DeviceGray",
       fillA: 1, strokeA: 1,

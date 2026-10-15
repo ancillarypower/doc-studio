@@ -5,29 +5,51 @@
 // the rebuilt base afterwards. Known limits: shading gradients, pattern fills
 // and annotation appearances keep their colors; CMYK/JPEG2000 images are
 // left untouched.
-import { PdfDoc, PdfError, deflate, raw, serializeToBytes, strBytes } from "./pdf.js";
+import { PdfDoc, deflate, raw, serializeToBytes, strBytes } from "./pdf.js";
+import type { PdfDict, PdfRaw, PdfRef, PdfStream, PdfValue } from "./types";
 
-const lat1 = (bytes) => { let s = ""; const CH = 0x8000; for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode(...bytes.subarray(i, i + CH)); return s; };
-const fromLat1 = (s) => { const out = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 255; return out; };
+export interface PostprocessOptions {
+  grayscale?: boolean;
+  /** JPEG re-encode quality 0–1; null keeps JPEGs as they are */
+  jpegQuality?: number | null;
+  /** < 1 downsamples re-encoded JPEGs (目標大小壓縮) */
+  jpegScale?: number;
+  onProgress?: (done: number, total: number) => void;
+}
+export interface PostprocessStats { contents: number; images: number; jpegs: number; dropped: number }
+export interface PostprocessResult { bytes: Uint8Array; stats: PostprocessStats }
 
-const rgbGray = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
-const cmykGray = (c, m, y, k) =>
+interface ImageOptions { grayscale: boolean; jpegQuality: number | null; jpegScale?: number }
+// /Indexed lookup: a byte string or a reference to a stream (ISO 32000-1 §8.6.6.3)
+interface IndexedInfo { base: string; hival: PdfValue; lookup: PdfRaw | PdfRef | null | undefined }
+// re-encoded JPEGs are tagged so postprocessPdf can count them
+type ImageResult = PdfStream & { _jpg?: true };
+// /Contents is a stream reference or an array of them (ISO 32000-1 §7.7.3.3)
+type Contents = PdfRef | ContentsArray | null | undefined;
+interface ContentsArray extends Array<Contents> { $ref?: undefined }
+interface FreshObject { num: number; gen: number; value: PdfValue }
+
+const lat1 = (bytes: Uint8Array) => { let s = ""; const CH = 0x8000; for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode(...bytes.subarray(i, i + CH)); return s; };
+const fromLat1 = (s: string) => { const out = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 255; return out; };
+
+const rgbGray = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
+const cmykGray = (c: number, m: number, y: number, k: number) =>
   rgbGray(1 - Math.min(1, c + k), 1 - Math.min(1, m + k), 1 - Math.min(1, y + k));
-const fmtG = (v) => String(parseFloat(Math.max(0, Math.min(1, v)).toFixed(4)));
-const isNumTok = (t) => /^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(t);
+const fmtG = (v: number) => String(parseFloat(Math.max(0, Math.min(1, v)).toFixed(4)));
+const isNumTok = (t: string) => /^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(t);
 
 // ---------- content-stream color rewrite ----------
 // Scans operator by operator; RGB/CMYK color settings become grayscale.
 // Text, geometry and everything else pass through byte-identical.
-export function grayContent(src) {
+export function grayContent(src: string): string {
   const WS = new Set([0, 9, 10, 12, 13, 32]);
   const DELIM = new Set([40, 41, 60, 62, 91, 93, 123, 125, 47, 37]);
   const n = src.length;
   let i = 0;
-  const out = [];
-  let buf = [];
-  const flush = (op) => {
-    let r = null;
+  const out: string[] = [];
+  let buf: string[] = [];
+  const flush = (op: string) => {
+    let r: string | null = null;
     if ((op === "rg" || op === "RG") && buf.length === 3 && buf.every(isNumTok)) {
       r = fmtG(rgbGray(+buf[0], +buf[1], +buf[2])) + (op === "rg" ? " g" : " G");
     } else if ((op === "k" || op === "K") && buf.length === 4 && buf.every(isNumTok)) {
@@ -125,19 +147,19 @@ export function grayContent(src) {
 
 // ---------- image transform ----------
 // Returns a replacement stream object, or null to keep the original.
-async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale = 1 }) {
+async function processImageValue(doc: PdfDoc, value: PdfStream, { grayscale, jpegQuality, jpegScale = 1 }: ImageOptions): Promise<ImageResult | null> {
   const dict = value.dict;
   if (dict["/ImageMask"] === true) return null;
   const bpc = dict["/BitsPerComponent"] ?? 8;
   if (bpc !== 8) return null;
-  const w = dict["/Width"], h = dict["/Height"];
+  const w = dict["/Width"] as number, h = dict["/Height"] as number;
   if (!w || !h || w > 16000 || h > 16000 || w * h > 40000000) return null;
   if (dict["/Decode"]) return null; // non-default sample mapping: leave alone
   let filter = dict["/Filter"];
   if (Array.isArray(filter)) { if (filter.length !== 1) return null; filter = filter[0]; }
   let cs;
   try { cs = await doc.resolve(dict["/ColorSpace"]); } catch { return null; }
-  let kind = null, indexed = null;
+  let kind: "gray" | "rgb" | "cmyk" | "indexed" | null = null, indexed: IndexedInfo | null = null;
   if (cs === "/DeviceGray") kind = "gray";
   else if (cs === "/DeviceRGB") kind = "rgb";
   else if (cs === "/DeviceCMYK") kind = "cmyk";
@@ -166,7 +188,7 @@ async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale
     const sc = jpegScale > 0 && jpegScale < 1 ? jpegScale : 1;
     const cv = document.createElement("canvas");
     cv.width = Math.max(1, Math.round(bmp.width * sc)); cv.height = Math.max(1, Math.round(bmp.height * sc));
-    const cx = cv.getContext("2d");
+    const cx = cv.getContext("2d")!;
     cx.imageSmoothingQuality = "high";
     cx.drawImage(bmp, 0, 0, cv.width, cv.height);
     bmp.close?.();
@@ -180,11 +202,11 @@ async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale
       cx.putImageData(im, 0, 0);
     }
     const q = jpegQuality != null ? Math.max(0.1, Math.min(1, jpegQuality)) : 0.92;
-    const blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", q));
+    const blob = await new Promise<Blob | null>((res) => cv.toBlob(res, "image/jpeg", q));
     if (!blob) return null;
     const bytes = new Uint8Array(await blob.arrayBuffer());
     if (!wantGray && bytes.length >= value.data.length) return null; // never bloat
-    const nd = { ...dict, "/Filter": "/DCTDecode", "/ColorSpace": "/DeviceRGB", "/Length": bytes.length, "/Width": cv.width, "/Height": cv.height };
+    const nd: PdfDict = { ...dict, "/Filter": "/DCTDecode", "/ColorSpace": "/DeviceRGB", "/Length": bytes.length, "/Width": cv.width, "/Height": cv.height };
     delete nd["/DecodeParms"];
     return { $stream: true, dict: nd, data: bytes, _jpg: true };
   }
@@ -195,9 +217,9 @@ async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale
   try { px = await doc.decodeStream(value); } catch { return null; }
 
   if (kind === "indexed") {
-    if (indexed.base !== "/DeviceRGB") return null;
+    if (indexed!.base !== "/DeviceRGB") return null;
     let pal = null;
-    const lk = indexed.lookup;
+    const lk = indexed!.lookup;
     try {
       if (lk && lk.$raw) {
         const b = lk.$raw instanceof Uint8Array ? lk.$raw : strBytes(lk.$raw);
@@ -207,7 +229,7 @@ async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale
           for (let k = 0; k < pal.length; k++) pal[k] = parseInt(hexs.substr(k * 2, 2), 16);
         } else if (b[0] === 40) { // literal string (...) with escapes
           const inner = b.slice(1, b.length - 1);
-          const tmp = [];
+          const tmp: number[] = [];
           for (let k = 0; k < inner.length; k++) {
             if (inner[k] === 92 && k + 1 < inner.length) {
               const nc = inner[k + 1];
@@ -216,7 +238,7 @@ async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale
                 while (kk < inner.length && oct.length < 3 && inner[kk] >= 48 && inner[kk] <= 55) oct += String.fromCharCode(inner[kk++]);
                 tmp.push(parseInt(oct, 8) & 255); k = kk - 1;
               } else {
-                const map = { 110: 10, 114: 13, 116: 9, 98: 8, 102: 12 };
+                const map: Record<number, number> = { 110: 10, 114: 13, 116: 9, 98: 8, 102: 12 };
                 tmp.push(map[nc] !== undefined ? map[nc] : nc); k++;
               }
             } else tmp.push(inner[k]);
@@ -235,10 +257,10 @@ async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale
     for (let k = 0; k < gp.length; k++) hex += gp[k].toString(16).padStart(2, "0");
     if (px.length !== w * h) return null;
     const packed = await deflate(px);
-    const nd = {
+    const nd: PdfDict = {
       ...dict,
       "/Filter": "/FlateDecode",
-      "/ColorSpace": ["/Indexed", "/DeviceGray", indexed.hival, raw(strBytes("<" + hex + ">"))],
+      "/ColorSpace": ["/Indexed", "/DeviceGray", indexed!.hival, raw(strBytes("<" + hex + ">"))],
       "/Length": packed.length,
     };
     delete nd["/DecodeParms"];
@@ -254,20 +276,20 @@ async function processImageValue(doc, value, { grayscale, jpegQuality, jpegScale
     else out[q] = Math.round(cmykGray(px[p] / 255, px[p + 1] / 255, px[p + 2] / 255, px[p + 3] / 255));
   }
   const packed = await deflate(out);
-  const nd = { ...dict, "/Filter": "/FlateDecode", "/ColorSpace": "/DeviceGray", "/Length": packed.length };
+  const nd: PdfDict = { ...dict, "/Filter": "/FlateDecode", "/ColorSpace": "/DeviceGray", "/Length": packed.length };
   delete nd["/DecodeParms"];
   delete nd["/Mask"]; // color-key masks reference the old color space
   return { $stream: true, dict: nd, data: packed };
 }
 
 // ---------- full rewrite writer ----------
-function writeFresh(doc, objs) {
-  const chunks = [];
-  const push = (c) => chunks.push(c);
+function writeFresh(doc: PdfDoc, objs: FreshObject[]): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  const push = (c: Uint8Array) => chunks.push(c);
   let pos = 0;
-  const track = (c) => { push(c); pos += c.length; };
+  const track = (c: Uint8Array) => { push(c); pos += c.length; };
   track(strBytes("%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"));
-  const offsets = new Map();
+  const offsets = new Map<number, number>();
   for (const o of objs) {
     offsets.set(o.num, pos);
     track(strBytes(`${o.num} ${o.gen} obj\n`));
@@ -275,7 +297,7 @@ function writeFresh(doc, objs) {
     track(strBytes("\nendobj\n"));
   }
   const xrefPos = pos;
-  const runs = [];
+  const runs: { start: number; items: FreshObject[] }[] = [];
   for (const o of objs) {
     const last = runs[runs.length - 1];
     if (last && o.num === last.start + last.items.length) last.items.push(o);
@@ -291,7 +313,7 @@ function writeFresh(doc, objs) {
   s += "trailer\n";
   track(strBytes(s));
   const maxNum = objs.length ? objs[objs.length - 1].num : 0;
-  const trailer = { "/Size": maxNum + 1, "/Root": doc.trailer["/Root"] };
+  const trailer: PdfDict = { "/Size": maxNum + 1, "/Root": doc.trailer["/Root"] };
   if (doc.trailer["/Info"]) trailer["/Info"] = doc.trailer["/Info"];
   track(serializeToBytes(trailer));
   track(strBytes(`\nstartxref\n${xrefPos}\n%%EOF\n`));
@@ -303,12 +325,12 @@ function writeFresh(doc, objs) {
   return outBytes;
 }
 
-export async function postprocessPdf(bytes, { grayscale = false, jpegQuality = null, jpegScale = 1, onProgress } = {}) {
+export async function postprocessPdf(bytes: Uint8Array, { grayscale = false, jpegQuality = null, jpegScale = 1, onProgress }: PostprocessOptions = {}): Promise<PostprocessResult> {
   const doc = await PdfDoc.load(bytes);
   const pages = await doc.getPageRefs();
   // collect page content-stream refs
-  const contentRefs = new Set();
-  const addContents = async (c) => {
+  const contentRefs = new Set<number>();
+  const addContents = async (c: Contents): Promise<void> => {
     if (!c) return;
     if (c.$ref !== undefined) {
       let r = null;
@@ -324,8 +346,8 @@ export async function postprocessPdf(bytes, { grayscale = false, jpegQuality = n
   const entries = [...doc.xref.entries()]
     .filter(([, e]) => e.type === 1 || e.type === 2)
     .sort((a, b) => a[0] - b[0]);
-  const objs = [];
-  const stats = { contents: 0, images: 0, jpegs: 0, dropped: 0 };
+  const objs: FreshObject[] = [];
+  const stats: PostprocessStats = { contents: 0, images: 0, jpegs: 0, dropped: 0 };
   let done = 0;
   for (const [num, entry] of entries) {
     done++;
