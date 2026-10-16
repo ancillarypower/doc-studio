@@ -4,6 +4,7 @@ import { type Align, type EngineData, type Lang, type Method, type SanOptions, t
 import { LABEL_ASCENT, LABEL_DESCENT } from "../pdf/font.js";
 import { MM, labelX, mulberry32, planPlacement, type PairNote, type SliceNote } from "../seal/plan.js";
 import { PdfDoc, PdfError, deflate } from "../pdf/pdf.js";
+import type { PdfStream } from "../pdf/types";
 import { SAN_DEFAULT, sanActive, sanDefaultsFor, sanSummary } from "../components/ScanPanel";
 import { applyOpacity, canvasToPdfImage, halfBoundaries, inkCoverage, loadSealCanvas, rotateQuarter, rotateSeal, sliceBoundaries, splitVertical, toGrayscale } from "../seal/image.js";
 import { buildLabels, generateSealedPdf } from "../seal/generate.js";
@@ -824,17 +825,18 @@ export function useStudio() {
         if (entry.type !== 1 && entry.type !== 2) continue;
         let v;
         try { v = await doc.getObject(num); } catch { continue; }
-        if (!v || !v.$stream) continue;
-        if (v.dict["/Subtype"] === "/Image") {
-          let cs = v.dict["/ColorSpace"];
+        if (!v || !(v as PdfStream).$stream) continue;
+        const stream = v as PdfStream;
+        if (stream.dict["/Subtype"] === "/Image") {
+          let cs = stream.dict["/ColorSpace"];
           try { cs = await doc.resolve(cs); } catch { /* keep raw */ }
-          images.push({ num, filter: String(v.dict["/Filter"]), cs: Array.isArray(cs) ? cs[0] : String(cs), bytes: v.data.length });
-        } else if (v.dict["/Subtype"] === "/Form" || v.dict["/Length"] !== undefined) {
-          let f = v.dict["/Filter"];
+          images.push({ num, filter: String(stream.dict["/Filter"]), cs: Array.isArray(cs) ? cs[0] : String(cs), bytes: stream.data.length });
+        } else if (stream.dict["/Subtype"] === "/Form" || stream.dict["/Length"] !== undefined) {
+          let f = stream.dict["/Filter"];
           if (Array.isArray(f)) f = f[0];
           if (f === "/FlateDecode") {
             try {
-              const t = lat1(await doc.decodeStream(v));
+              const t = lat1(await doc.decodeStream(stream));
               const colr = t.match(/[\d.\-]+ [\d.\-]+ [\d.\-]+ (rg|RG)\b|[\d.\-]+ [\d.\-]+ [\d.\-]+ [\d.\-]+ (k|K)\b/g);
               const gray = t.match(/[\d.\-]+ (g|G)\b/g);
               if (colr) colorOps += colr.length;

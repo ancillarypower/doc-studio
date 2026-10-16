@@ -3,7 +3,8 @@
 // Web Crypto. The decrypted document is re-written as a brand-new plain PDF (no /Encrypt),
 // which then flows back into 壹區 exactly like a normal upload.
 import { PdfDoc, PdfError, serializeToBytes, strBytes, raw } from "./pdf.js";
-import type { PdfDict, PdfRaw, PdfStream, PdfValue } from "./types";
+import type { LoadedPdfDoc } from "./pdf.js";
+import type { PdfArray, PdfDict, PdfRaw, PdfRef, PdfStream, PdfValue } from "./types";
 
 type CryptMethod = "RC4" | "AES128" | "AES256" | "NONE";
 interface AesKey { w: Uint8Array; Nr: number }
@@ -214,7 +215,7 @@ const hexString = (bytes: Uint8Array) => {
   for (const x of bytes) s += x.toString(16).padStart(2, "0");
   return raw(s + ">");
 };
-const toBytes = async (doc: PdfDoc, v: PdfValue): Promise<Uint8Array> => { v = await doc.resolve(v); return v && (v as PdfRaw).$raw ? stringBytes(v as PdfRaw) : new Uint8Array(0); };
+const toBytes = async (doc: PdfDoc, v: PdfValue | undefined): Promise<Uint8Array> => { v = await doc.resolve(v); return v && (v as PdfRaw).$raw ? stringBytes(v as PdfRaw) : new Uint8Array(0); };
 
 function pwCandidates(pw: string, modern: boolean): Uint8Array[] {
   const utf8 = strBytes(modern ? pw.normalize("NFKC") : pw);
@@ -225,29 +226,29 @@ function pwCandidates(pw: string, modern: boolean): Uint8Array[] {
 }
 
 // ---------- security handler ----------
-async function readHandler(doc: PdfDoc): Promise<SecurityHandler> {
+async function readHandler(doc: LoadedPdfDoc): Promise<SecurityHandler> {
   const encRef = doc.trailer["/Encrypt"];
-  const enc = await doc.resolve(encRef);
+  const enc = await doc.resolve(encRef) as PdfDict;
   if (!enc || enc["/Filter"] !== "/Standard") throw new PdfError("UNSUPPORTED_SECURITY");
   const V = Number(enc["/V"] ?? 0), R = Number(enc["/R"] ?? 2);
-  const ids = doc.trailer["/ID"] ? await doc.resolve(doc.trailer["/ID"]) : null;
+  const ids = doc.trailer["/ID"] ? await doc.resolve(doc.trailer["/ID"]) as PdfArray : null;
   const id0 = ids && ids[0] ? await toBytes(doc, ids[0]) : new Uint8Array(0);
   const encMeta = enc["/EncryptMetadata"] !== false;
   let stm: CryptMethod = "RC4", str: CryptMethod = "RC4";
   if (V >= 4) {
-    const cf = (await doc.resolve(enc["/CF"])) || {};
+    const cf = (await doc.resolve(enc["/CF"]) || {}) as PdfDict;
     const pick = async (name: string | undefined): Promise<CryptMethod> => {
       if (!name || name === "/Identity") return "NONE";
-      const f = (await doc.resolve(cf[name])) || {};
+      const f = (await doc.resolve(cf[name]) || {}) as PdfDict;
       const m = f["/CFM"];
       return m === "/AESV2" ? "AES128" : m === "/AESV3" ? "AES256" : m === "/V2" ? "RC4" : "NONE";
     };
-    stm = await pick(enc["/StmF"]); str = await pick(enc["/StrF"]);
+    stm = await pick(enc["/StmF"] as string | undefined); str = await pick(enc["/StrF"] as string | undefined);
   }
   const P = Number(enc["/P"] ?? 0) | 0;
   const h = {
     V, R, P, id0, encMeta, stm, str,
-    encNum: encRef && encRef.$ref !== undefined ? encRef.$ref : null,
+    encNum: encRef && (encRef as PdfRef).$ref !== undefined ? (encRef as PdfRef).$ref : null,
     O: await toBytes(doc, enc["/O"]), U: await toBytes(doc, enc["/U"]),
     OE: await toBytes(doc, enc["/OE"]), UE: await toBytes(doc, enc["/UE"]),
     n: R === 2 ? 5 : Math.max(5, Math.min(16, Number(enc["/Length"] ?? 40) / 8)),
@@ -345,7 +346,7 @@ function makeCrypt(h: SecurityHandler, fileKey: Uint8Array): PdfCrypt {
     const d = v as PdfDict;
     const sig = d["/Type"] === "/Sig" || d["/ByteRange"] !== undefined;
     const out: PdfDict = {};
-    for (const k of Object.keys(d)) out[k] = sig && k === "/Contents" ? d[k] : walk(d[k], num, gen);
+    for (const k of Object.keys(d)) out[k] = sig && k === "/Contents" ? d[k]! : walk(d[k]!, num, gen);
     return out;
   };
   return {
@@ -389,11 +390,11 @@ export async function decryptPdf(bytes: Uint8Array, password: string): Promise<D
   const nums: number[] = [...doc.xref.keys()].sort((a, b) => a - b);
   for (const num of nums) {
     if (num === h.encNum) continue;
-    const e = doc.xref.get(num);
+    const e = doc.xref.get(num)!;
     if (e.type !== 1 && e.type !== 2) continue;
     let v;
     try { v = await doc.getObject(num); } catch { continue; }
-    if (v && v.$stream && (v.dict["/Type"] === "/XRef" || v.dict["/Type"] === "/ObjStm")) continue;
+    if (v && (v as PdfStream).$stream && ((v as PdfStream).dict["/Type"] === "/XRef" || (v as PdfStream).dict["/Type"] === "/ObjStm")) continue;
     const gen = e.type === 1 ? e.gen || 0 : 0;
     const head = strBytes(`${num} ${gen} obj\n`), body = serializeToBytes(v), foot = strBytes("\nendobj\n");
     offsets.set(num, { off: pos, gen });

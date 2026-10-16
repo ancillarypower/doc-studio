@@ -85,7 +85,7 @@ async function loadAll(doc: PdfDoc): Promise<{ objs: Map<number, PdfValue>; stru
     if (e.type !== 1 && e.type !== 2) continue;
     let v;
     try { v = await doc.getObject(num); } catch { continue; }
-    if (v && v.$stream && (v.dict["/Type"] === "/XRef" || v.dict["/Type"] === "/ObjStm")) { structural++; continue; }
+    if (v && (v as PdfStream).$stream && ((v as PdfStream).dict["/Type"] === "/XRef" || (v as PdfStream).dict["/Type"] === "/ObjStm")) { structural++; continue; }
     if (isDict(v) && v["/Linearized"] !== undefined) { structural++; continue; }
     objs.set(num, v);
   }
@@ -96,7 +96,7 @@ const mkR = (objs: Map<number, PdfValue>): Resolve => (v) => {
   while (isRef(v) && d++ < 32) v = objs.has(v.$ref) ? objs.get(v.$ref) : null;
   return v ?? null;
 };
-function reachable(objs: Map<number, PdfValue>, roots: PdfValue[]): number[] {
+function reachable(objs: Map<number, PdfValue>, roots: (PdfValue | undefined)[]): number[] {
   const seen = new Set<number>(), order: number[] = [], queue: number[] = [];
   const visit = (v: PdfValue | undefined) => {
     if (v == null || typeof v !== "object" || v.$raw) return;
@@ -312,7 +312,7 @@ function ocModel(cat: PdfDict, R: Resolve): OcModel {
   const ocgs = R(ocp["/OCGs"]);
   const D = (R(ocp["/D"]) || {}) as PdfDict;
   const base = D["/BaseState"] || "/ON";
-  const set = (v: PdfValue) => new Set(((R(v) || []) as PdfArray).filter(isRef).map((r) => r.$ref));
+  const set = (v: PdfValue | undefined) => new Set(((R(v) || []) as PdfArray).filter(isRef).map((r) => r.$ref));
   const off = set(D["/OFF"]), on = set(D["/ON"]);
   for (const r of Array.isArray(ocgs) ? ocgs : []) {
     if (!isRef(r)) continue;
@@ -348,10 +348,10 @@ async function decodeToStr(doc: PdfDoc, v: PdfValue | undefined): Promise<string
   if (f !== undefined && f !== "/FlateDecode" && f !== "/Fl") return null;
   try { return lat1(await doc.decodeStream(s)); } catch { return null; }
 }
-function contentList(v: PdfValue, R: Resolve): PdfValue[] {
+function contentList(v: PdfValue | undefined, R: Resolve): PdfValue[] {
   const c = R(v);
   if (!c) return [];
-  if ((c as PdfStream).$stream) return [v];
+  if ((c as PdfStream).$stream) return [v!];
   if (Array.isArray(c)) return c.filter((x) => (R(x) as PdfStream | null)?.$stream);
   return [];
 }
@@ -562,7 +562,7 @@ export async function scanPdf(bytes: Uint8Array, onProgress?: (done: number, tot
   const pages = await doc.getPageRefs();
   const { objs, structural } = await loadAll(doc);
   const R = mkR(objs);
-  const trailer = doc.trailer;
+  const trailer = doc.trailer as PdfDict;
   const cat = (R(trailer["/Root"]) || {}) as PdfDict;
   const order = reachable(objs, [trailer["/Root"], trailer["/Info"]]);
   const reach = new Set(order);
@@ -630,7 +630,7 @@ export async function scanPdf(bytes: Uint8Array, onProgress?: (done: number, tot
     js.openAction = Array.isArray(a) ? "跳到指定頁" : isDict(a) ? (pdfText(a["/S"]) || "動作") : "動作";
   }
   const names = R(cat["/Names"]);
-  const countNameTree = (node: PdfValue, depth = 0): number => {
+  const countNameTree = (node: PdfValue | undefined, depth = 0): number => {
     const nd = R(node);
     if (!isDict(nd) || depth > 20) return 0;
     let n = 0;
@@ -698,7 +698,7 @@ export async function scanPdf(bytes: Uint8Array, onProgress?: (done: number, tot
   const ol = R(cat["/Outlines"]);
   if (isDict(ol)) {
     const seen = new Set<number>();
-    const walk = (node: PdfValue, depth: number) => {
+    const walk = (node: PdfValue | undefined, depth: number) => {
       let cur = node;
       while (cur && isRef(cur) && !seen.has(cur.$ref) && seen.size < 20000 && depth < 50) {
         seen.add(cur.$ref);
@@ -957,10 +957,10 @@ export async function sanitizePdf(bytes: Uint8Array, opts: Partial<SanOptions>, 
   if (opts.meta && trailer["/Info"] !== undefined) st.metaRemoved++;
   const order = reachable(objs, keepInfo ? [trailer["/Root"], trailer["/Info"]] : [trailer["/Root"]]);
   const map = new Map(order.map((n, i): [number, number] => [n, i + 1]));
-  const remap = (v: PdfValue): PdfValue => {
+  const remap = (v: PdfValue | undefined): PdfValue | undefined => {
     if (v == null || typeof v !== "object" || v.$raw) return v;
     if (isRef(v)) return map.has(v.$ref) ? { $ref: map.get(v.$ref)!, gen: 0 } : null;
-    if (Array.isArray(v)) return v.map(remap);
+    if (Array.isArray(v)) return v.map(remap) as PdfArray;
     if (v.$stream) { const s = v as PdfStream; const d = remap(s.dict) as PdfDict; d["/Length"] = s.data.length; return { $stream: true, dict: d, data: s.data }; }
     const o: PdfDict = {};
     for (const k of Object.keys(v)) o[k] = remap((v as PdfDict)[k]);
