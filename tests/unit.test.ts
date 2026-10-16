@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { fmtPages, sanSummary, SAN_DEFAULT } from "../src/components/ScanPanel";
 import { clampTarget, fmtBytes, repairMojibake, sanitizeBase } from "../src/lib/helpers";
 import { decryptPdf, probeEncryption } from "../src/pdf/crypt.js";
+import { PdfDoc, PdfUpdate, pdfString, raw, ref, serializeToBytes } from "../src/pdf/pdf.js";
 import { sanitizePdf, scanPdf } from "../src/pdf/sanitize.js";
+import type { PdfStream } from "../src/pdf/types";
 
 const KEYS = ["meta", "history", "js", "attach", "links", "piece", "exif", "annots", "layers", "invisible", "sig", "hiddenText"] as const;
 const load = (f: string) => new Uint8Array(readFileSync(`fixtures/${f}`));
@@ -28,6 +30,61 @@ describe("fixtures × engine", () => {
     const r = await scanPdf(load("all-triggers.pdf"));
     for (const k of KEYS) expect(r[k].detected, k).toBe(true);
     expect(r.exif.gps).toBe(1);
+  });
+
+  describe("PDF core", () => {
+    it("parses the latest incremental revision and preserves its indirect page reference", async () => {
+      const doc = await PdfDoc.load(load("all-triggers.pdf"));
+      const pages = await doc.getPageRefs();
+
+      // Type-only class declarations must not introduce new own properties.
+      expect(Object.keys(new PdfDoc(new Uint8Array()))).toEqual(["bytes", "xref", "trailer", "cache", "objStmCache"]);
+      expect(Object.hasOwn(doc, "crypt")).toBe(false);
+      expect(doc.xref.size).toBe(28);
+      expect(doc.trailer["/Root"]).toEqual(ref(1));
+      expect(pages.map(({ index, ref: pageRef, gen, box, rotate }) => ({ index, ref: pageRef, gen, box, rotate })))
+        .toEqual([{ index: 0, ref: 3, gen: 0, box: [0, 0, 595, 842], rotate: 0 }]);
+      expect(serializeToBytes(await doc.getObject(6))).toEqual(new TextEncoder().encode(
+        "<< /Title (Fixture, revised) /Author (Test Author) /Producer (FixtureMaker 1.0) /ModDate (D:20260102000000+08'00') >>"
+      ));
+    });
+
+    it("serializes PDF references, raw strings, dictionaries, and stream bytes", () => {
+      expect(serializeToBytes({ "/Ref": ref(7, 2), "/Value": raw("<CAFE>") }))
+        .toEqual(new TextEncoder().encode("<< /Ref 7 2 R /Value <CAFE> >>"));
+      const stream = { $stream: true as const, dict: { "/Length": 2 }, data: new Uint8Array([0, 255]) };
+      expect(serializeToBytes(stream)).toEqual(new Uint8Array([
+        ...new TextEncoder().encode("<< /Length 2 >>\nstream\r\n"), 0, 255,
+        ...new TextEncoder().encode("\r\nendstream"),
+      ]));
+    });
+
+    it("preserves original bytes and emits deterministic incremental additions and replacements", async () => {
+      const original = load("all-triggers.pdf");
+      const write = async () => {
+        const doc = await PdfDoc.load(original);
+        const update = new PdfUpdate(doc);
+        const objectRef = update.addObject({ "/Type": "/Example", "/Value": 42 });
+        const streamRef = update.addStream({ "/Length": 3 }, new Uint8Array([0, 1, 255]));
+        update.replaceObject(6, 0, { "/Title": pdfString("Incremental replacement") });
+        return { bytes: await update.build(), objectRef, streamRef, previousXref: doc.startxrefPos };
+      };
+      const first = await write();
+      const second = await write();
+
+      expect(first.bytes).toEqual(second.bytes);
+      expect(first.bytes.subarray(0, original.length)).toEqual(original);
+
+      const updated = await PdfDoc.load(first.bytes);
+      expect(updated.trailer["/Prev"]).toBe(first.previousXref);
+      expect(await updated.resolve(first.objectRef)).toEqual({ "/Type": "/Example", "/Value": 42 });
+      expect(serializeToBytes(await updated.getObject(6))).toEqual(
+        serializeToBytes({ "/Title": pdfString("Incremental replacement") })
+      );
+      const stream = await updated.getObject(first.streamRef.$ref);
+      expect(stream && (stream as PdfStream).$stream).toBe(true);
+      expect(await updated.decodeStream(stream as PdfStream)).toEqual(new Uint8Array([0, 1, 255]));
+    });
   });
   it("full purge clears every category it has an option for", async () => {
     const all = { meta: true, history: true, js: true, attach: true, links: "all" as const, piece: true, outlines: true, exif: true, flatten: true, ocg: true, invisible: true };

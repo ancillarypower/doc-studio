@@ -4,13 +4,10 @@ import { PdfDoc, PdfUpdate, deflate } from "../pdf/pdf.js";
 import { buildFont, encodeText, textWidth, labelText, LABEL_ASCENT, LABEL_DESCENT } from "../pdf/font.js";
 import { MM, planPlacement, mulberry32 } from "./plan.js";
 import type { PdfImage } from "./image.js";
+import type { PdfDict, PdfRaw, PdfRef, PdfStream, PdfValue } from "../pdf/types";
 
 export const LABEL_SIZE = 9;
 export const LABEL_FONT = "/SealF1";
-
-// A PDF dictionary as handed out by the pdf engine. Values stay opaque here: this module only
-// copies keys between dictionaries and checks the engine's $ref / $raw / $stream markers.
-type PdfDict = Record<string, unknown>;
 
 // one embedded seal image, deduplicated by key
 export interface SealImage extends PdfImage { key: string }
@@ -51,11 +48,11 @@ function overlayRotationPrefix(box: number[], rotate: number): string | null {
 // an appended stream otherwise inherits that transform: labels flip and all
 // planned coordinates are mirrored. Return the inverse of the first base cm
 // when it is clearly a page-level transform.
-async function inheritedBaseReset(doc: PdfDoc, contents: unknown): Promise<string | null> {
-  let first = (Array.isArray(contents) ? contents[0] : contents) as PdfDict | null | undefined;
-  if (first?.$ref !== undefined) first = await doc.resolve(first);
-  if (!first?.$stream) return null;
-  const bytes = await doc.decodeStream(first);
+async function inheritedBaseReset(doc: PdfDoc, contents: PdfValue | undefined): Promise<string | null> {
+  let first = Array.isArray(contents) ? contents[0] : contents;
+  if (first && (first as PdfRef).$ref !== undefined) first = await doc.resolve(first as PdfRef);
+  if (!first || !(first as PdfStream).$stream) return null;
+  const bytes = await doc.decodeStream(first as PdfStream);
   const text = new TextDecoder("latin1").decode(bytes.subarray(0, 4096));
   const match = text.match(/([-+]?(?:\d*\.?\d+))\s+([-+]?(?:\d*\.?\d+))\s+([-+]?(?:\d*\.?\d+))\s+([-+]?(?:\d*\.?\d+))\s+([-+]?(?:\d*\.?\d+))\s+([-+]?(?:\d*\.?\d+))\s+cm\b/);
   if (!match) return null;
@@ -73,7 +70,7 @@ async function inheritedBaseReset(doc: PdfDoc, contents: unknown): Promise<strin
 }
 
 // Merge our font + images into the page's (possibly inherited) resources.
-function mergeResources(origResources: PdfDict | null | undefined, fontRef: unknown, imageRefs: unknown[]) {
+function mergeResources(origResources: PdfDict | null | undefined, fontRef: PdfValue, imageRefs: (PdfValue | undefined)[]) {
   const res: PdfDict = {};
   if (origResources && typeof origResources === "object" && !origResources.$raw) {
     for (const k of Object.keys(origResources)) {
@@ -116,10 +113,10 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, onPro
   const fontRef = await buildFont(update);
 
   // embed images (dedupe by key)
-  const refByKey = new Map<string, ReturnType<PdfUpdate["addStream"]>>();
+  const refByKey = new Map<string, PdfRef>();
   for (const img of sealImages) {
     if (refByKey.has(img.key)) continue;
-    let maskRef = null;
+    let maskRef: PdfRef | null = null;
     if (img.mask) {
       maskRef = update.addStream(
         { "/Type": "/XObject", "/Subtype": "/Image", "/Width": img.w, "/Height": img.h, "/ColorSpace": "/DeviceGray", "/BitsPerComponent": 8, "/Filter": "/FlateDecode", "/Length": img.mask.length },
@@ -146,7 +143,7 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, onPro
     if (baseReset) parts.push(baseReset + "\n");
     if (prefix) parts.push(prefix + "\n");
     // seal parts for this page
-    const imgRefs: unknown[] = [];
+    const imgRefs: (PdfValue | undefined)[] = [];
     const placements: OverlaySeal[] = [];
     for (const s of plan.seals) {
       imgRefs.push(refByKey.get(s.imgKey));
@@ -155,21 +152,21 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, onPro
     const resolved = await doc.resolve(page.resourcesSrc);
     // Deep-resolve /Font and /XObject sub-dicts: they are often indirect
     // refs, and mergeResources needs to iterate their keys.
-    let effectiveRes = resolved && resolved.$raw ? null : resolved;
+    let effectiveRes: PdfDict | null | undefined = resolved && (resolved as PdfRaw).$raw ? null : resolved as PdfDict | null | undefined;
     if (effectiveRes) {
       const fontVal = effectiveRes["/Font"];
       const xoVal   = effectiveRes["/XObject"];
-      const needsCopy = (fontVal && fontVal.$ref !== undefined) ||
-                        (xoVal  && xoVal.$ref  !== undefined);
+      const needsCopy = (fontVal && (fontVal as PdfRef).$ref !== undefined) ||
+                        (xoVal  && (xoVal as PdfRef).$ref  !== undefined);
       if (needsCopy) {
         effectiveRes = { ...effectiveRes };
-        if (fontVal && fontVal.$ref !== undefined) {
+        if (fontVal && (fontVal as PdfRef).$ref !== undefined) {
           const f = await doc.resolve(fontVal);
-          if (f && typeof f === "object" && !f.$raw) effectiveRes["/Font"] = f;
+          if (f && typeof f === "object" && !(f as PdfRaw).$raw) effectiveRes["/Font"] = f;
         }
-        if (xoVal && xoVal.$ref !== undefined) {
+        if (xoVal && (xoVal as PdfRef).$ref !== undefined) {
           const x = await doc.resolve(xoVal);
-          if (x && typeof x === "object" && !x.$raw) effectiveRes["/XObject"] = x;
+          if (x && typeof x === "object" && !(x as PdfRaw).$raw) effectiveRes["/XObject"] = x;
         }
       }
     }
@@ -195,20 +192,20 @@ export async function generateSealedPdf({ pdfBytes, pagesPlan, sealImages, onPro
     const compressed = await deflate(content);
     const overlayRef = update.addStream({ "/Length": compressed.length, "/Filter": "/FlateDecode" }, compressed);
     // /Contents may be an indirect ref to an array; resolve so we append correctly
-    if (origContents && origContents.$ref !== undefined) {
-      const c = await doc.resolve(origContents);
+    if (origContents && (origContents as PdfRef).$ref !== undefined) {
+      const c = await doc.resolve(origContents as PdfRef);
       if (Array.isArray(c)) origContents = c;
     }
-    let newContents: unknown;
+    let newContents: PdfValue;
     if (Array.isArray(origContents)) newContents = [...origContents, overlayRef];
     else if (origContents) newContents = [origContents, overlayRef];
     else newContents = overlayRef;
     // Write merged Resources as an indirect object (better Preview.app / macOS compat)
-    const resFontRef = update.addObject(res["/Font"]);
-    const resXoRef = update.addObject(res["/XObject"]);
+    const resFontRef = update.addObject(res["/Font"]!);
+    const resXoRef = update.addObject(res["/XObject"]!);
     const indirectRes = { ...res, "/Font": resFontRef, "/XObject": resXoRef };
     const resRef = update.addObject(indirectRes);
-    const newDict = { ...page.dict, "/Contents": newContents, "/Resources": resRef };
+    const newDict: PdfDict = { ...page.dict, "/Contents": newContents, "/Resources": resRef };
     update.replaceObject(page.ref, page.gen, newDict);
     onProgress?.(i + 1, pages.length);
   }

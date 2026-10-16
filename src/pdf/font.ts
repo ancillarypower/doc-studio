@@ -1,8 +1,11 @@
 // Embeds the subset TC font as a Type0/CIDFontType2 font and encodes label text.
 import { FONT_B64, FONT_METRICS } from "./sealFontData.js";
-import { deflate, pdfString, ref } from "./pdf.js";
+import { deflate, pdfString, type PdfUpdate } from "./pdf.js";
+import type { PdfRef } from "./types";
 
-function b64ToBytes(b64) {
+type GlyphMetrics = { u: number; w: number };
+
+function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -10,30 +13,30 @@ function b64ToBytes(b64) {
 }
 
 const UPM = FONT_METRICS.upm;
-const GID_INFO = new Map(Object.entries(FONT_METRICS.cids).map(([gid, v]) => [Number(gid), v]));
-const U2GID = new Map([...GID_INFO.entries()].map(([gid, v]) => [v.u, gid]));
+const GID_INFO = new Map<number, GlyphMetrics>(Object.entries(FONT_METRICS.cids).map(([gid, v]) => [Number(gid), v]));
+const U2GID = new Map<number, number>([...GID_INFO.entries()].map(([gid, v]) => [v.u, gid]));
 
-export function labelText(pageNum, total, lang) {
+export function labelText(pageNum: number, total: number, lang: string): string {
   return lang === "en" ? `Page ${pageNum} of ${total}` : `第 ${pageNum} 頁，共 ${total} 頁`;
 }
 
-export function encodeText(str) {
+export function encodeText(str: string): string {
   // -> hex string of 2-byte BE CIDs (= glyph ids)
   let hex = "";
   for (const ch of str) {
-    const gid = U2GID.get(ch.codePointAt(0));
+    const gid = U2GID.get(ch.codePointAt(0)!);
     if (!gid) throw new Error("Glyph missing for " + ch);
     hex += gid.toString(16).padStart(4, "0");
   }
   return hex;
 }
 
-export function textWidth(str, fontSize) {
+export function textWidth(str: string, fontSize: number): number {
   let w = 0;
   for (const ch of str) {
-    const gid = U2GID.get(ch.codePointAt(0));
+    const gid = U2GID.get(ch.codePointAt(0)!);
     if (!gid) throw new Error("Glyph missing for " + ch);
-    w += GID_INFO.get(gid).w;
+    w += GID_INFO.get(gid)!.w;
   }
   return (w * fontSize) / UPM;
 }
@@ -41,7 +44,7 @@ export function textWidth(str, fontSize) {
 export const LABEL_DESCENT = -FONT_METRICS.descent / UPM; // positive, in em
 export const LABEL_ASCENT = FONT_METRICS.ascent / UPM;
 
-export async function buildFont(update) {
+export async function buildFont(update: PdfUpdate): Promise<PdfRef> {
   const ttf = b64ToBytes(FONT_B64);
   const compressed = await deflate(ttf);
   const fileRef = update.addStream(
@@ -63,12 +66,12 @@ export async function buildFont(update) {
   });
   // /W array: compact consecutive runs
   const gids = [...GID_INFO.keys()].sort((a, b) => a - b);
-  const wArr = [];
-  let runStart = null, runWidths = [], prev = null;
+  const wArr: (number | number[])[] = [];
+  let runStart: number | null = null, runWidths: number[] = [], prev: number | null = null;
   const flush = () => { if (runStart !== null) { wArr.push(runStart, runWidths); runStart = null; runWidths = []; } };
   for (const gid of gids) {
-    if (runStart !== null && gid === prev + 1) { runWidths.push(GID_INFO.get(gid).w); }
-    else { flush(); runStart = gid; runWidths = [GID_INFO.get(gid).w]; }
+    if (runStart !== null && gid === prev! + 1) { runWidths.push(GID_INFO.get(gid)!.w); }
+    else { flush(); runStart = gid; runWidths = [GID_INFO.get(gid)!.w]; }
     prev = gid;
   }
   flush();
@@ -84,7 +87,7 @@ export async function buildFont(update) {
   });
   // ToUnicode CMap
   const bf = gids.map((gid) => {
-    const u = GID_INFO.get(gid).u;
+    const u = GID_INFO.get(gid)!.u;
     return `<${gid.toString(16).padStart(4, "0")}> <${u.toString(16).padStart(4, "0")}>`;
   });
   const cmap = `/CIDInit /ProcSet findresource begin

@@ -7,7 +7,7 @@
 // Anything unsupported is skipped per-operator; a page that fails outright
 // returns null and the diagram keeps its placeholder card.
 import type { PdfDoc } from "./pdf.js";
-import type { PdfDict, PdfPageRef, PdfRaw, PdfRef, PdfValue } from "./types";
+import type { PdfDict, PdfPageRef, PdfRaw, PdfRef, PdfStream, PdfValue } from "./types";
 
 const lat1 = (bytes: Uint8Array) => { let s = ""; const CH = 0x8000; for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode(...bytes.subarray(i, i + CH)); return s; };
 
@@ -214,7 +214,7 @@ async function paletteBytes(doc: PdfDoc, lk: PaletteLookup): Promise<Uint8Array 
   }
   if (lk.$ref !== undefined) {
     const s = await doc.resolve(lk);
-    if (s && s.$stream) return doc.decodeStream(s);
+    if (s && (s as PdfStream).$stream) return doc.decodeStream(s as PdfStream);
   }
   return null;
 }
@@ -228,7 +228,7 @@ async function resolveCS(doc: PdfDoc, res: PdfDict | null, cs: PdfValue): Promis
     if (cs === "/DeviceCMYK") return { kind: "cmyk", comps: 4 };
     if (cs === "/Pattern") return { kind: "pattern", comps: 0 };
     const named = res && res["/ColorSpace"] ? await doc.resolve(res["/ColorSpace"]) : null;
-    if (named && named[cs] !== undefined) return resolveCS(doc, res, named[cs]);
+    if (named && (named as PdfDict)[cs] !== undefined) return resolveCS(doc, res, (named as PdfDict)[cs]!);
     return { kind: "rgb", comps: 3 };
   }
   if (Array.isArray(cs) && cs.length) {
@@ -239,7 +239,7 @@ async function resolveCS(doc: PdfDoc, res: PdfDict | null, cs: PdfValue): Promis
     if (t === "/ICCBased") {
       let icc = null;
       try { icc = await doc.resolve(cs[1]); } catch { /* ignore */ }
-      const nn = icc && icc.$stream ? icc.dict["/N"] : icc && icc["/N"];
+      const nn = icc && (icc as PdfStream).$stream ? (icc as PdfStream).dict["/N"] : icc && (icc as PdfDict)["/N"];
       if (nn === 1) return { kind: "gray", comps: 1 };
       if (nn === 4) return { kind: "cmyk", comps: 4 };
       return { kind: "rgb", comps: 3 };
@@ -365,9 +365,10 @@ async function decodeImageToCanvas(
 
   if (dict["/SMask"] && !isMask) {
     try {
-      const sm = await doc.resolve(dict["/SMask"]);
-      if (sm && sm.$stream) {
-        const smCv = await decodeImageToCanvas(doc, res, { ...sm.dict, "/SMask": undefined, "/Mask": undefined }, sm.data, new Map(), null);
+      const sm = await doc.resolve(dict["/SMask"]!);
+      if (sm && (sm as PdfStream).$stream) {
+      const smStream = sm as PdfStream;
+      const smCv = await decodeImageToCanvas(doc, res, { ...smStream.dict, "/SMask": undefined, "/Mask": undefined }, smStream.data, new Map(), null);
         if (smCv) {
           const tmp = document.createElement("canvas");
           tmp.width = w; tmp.height = h;
@@ -394,14 +395,14 @@ export function createRenderer(doc: PdfDoc) {
   const num = (t: Tok | undefined): number => (t && t.n !== undefined ? t.n : typeof t === "number" ? t : 0);
 
   async function lookupFont(res: PdfDict, name: string): Promise<FontInfo> {
-    const fonts = res["/Font"] ? await doc.resolve(res["/Font"]) : null;
+    const fonts = res["/Font"] ? await doc.resolve(res["/Font"]!) as PdfDict : null;
     const f = fonts ? fonts[name] : null;
     if (!f) return { cid: false };
-    const refNum = f.$ref !== undefined ? f.$ref : null;
+    const refNum = (f as PdfRef).$ref !== undefined ? (f as PdfRef).$ref : null;
     if (refNum != null && fontCache.has(refNum)) return fontCache.get(refNum)!;
     let out = { cid: false };
     try {
-      const fd = await doc.resolve(f);
+      const fd = await doc.resolve(f) as PdfDict;
       if (fd && fd["/Subtype"] === "/Type0") out = { cid: true };
     } catch { /* keep default */ }
     if (refNum != null) fontCache.set(refNum, out);
@@ -542,12 +543,13 @@ export function createRenderer(doc: PdfDoc) {
             break;
           }
           case "gs": {
-            const table = res["/ExtGState"] ? await doc.resolve(res["/ExtGState"]) : null;
-            const g = table && args[0] && args[0].name ? await doc.resolve(table[args[0].name]) : null;
+            const table = res["/ExtGState"] ? await doc.resolve(res["/ExtGState"]!) as PdfDict : null;
+            const g = table && args[0] && args[0].name ? await doc.resolve(table[args[0].name]!) : null;
             if (g) {
-              if (typeof g["/ca"] === "number") st.fillA = g["/ca"];
-              if (typeof g["/CA"] === "number") st.strokeA = g["/CA"];
-              const bm = Array.isArray(g["/BM"]) ? g["/BM"][0] : g["/BM"];
+              const gs = g as PdfDict;
+              if (typeof gs["/ca"] === "number") st.fillA = gs["/ca"];
+              if (typeof gs["/CA"] === "number") st.strokeA = gs["/CA"];
+              const bm = Array.isArray(gs["/BM"]) ? gs["/BM"][0] : gs["/BM"];
               if (typeof bm === "string" && BLEND[bm]) ctx.globalCompositeOperation = BLEND[bm];
             }
             break;
@@ -598,29 +600,30 @@ export function createRenderer(doc: PdfDoc) {
           }
           case "Do": {
             if (!args[0] || !args[0].name) break;
-            const xos = res["/XObject"] ? await doc.resolve(res["/XObject"]) : null;
+            const xos = res["/XObject"] ? await doc.resolve(res["/XObject"]!) as PdfDict : null;
             const xoRef = xos ? xos[args[0].name] : null;
             if (!xoRef) break;
             const v = await doc.resolve(xoRef);
-            if (!v || !v.$stream) break;
-            const sub = v.dict["/Subtype"];
+            if (!v || !(v as PdfStream).$stream) break;
+            const stream = v as PdfStream;
+            const sub = stream.dict["/Subtype"];
             if (sub === "/Image") {
-              const key = xoRef.$ref !== undefined ? xoRef.$ref : null;
-              const imgCv = await decodeImageToCanvas(doc, res, v.dict, v.data, imgCache, key);
+              const key = (xoRef as PdfRef).$ref !== undefined ? (xoRef as PdfRef).$ref : null;
+              const imgCv = await decodeImageToCanvas(doc, res, stream.dict, stream.data, imgCache, key);
               if (imgCv) paintImage(ctx, st, imgCv);
             } else if (sub === "/Form" && depth < 8) {
               pushState(ctx, st);
               try {
-                const m = v.dict["/Matrix"];
-                if (Array.isArray(m) && m.length === 6) ctx.transform(num({ n: m[0] }), num({ n: m[1] }), num({ n: m[2] }), num({ n: m[3] }), num({ n: m[4] }), num({ n: m[5] }));
-                const bb = v.dict["/BBox"];
+                const m = stream.dict["/Matrix"];
+                if (Array.isArray(m) && m.length === 6) ctx.transform(num({ n: m[0] as number }), num({ n: m[1] as number }), num({ n: m[2] as number }), num({ n: m[3] as number }), num({ n: m[4] as number }), num({ n: m[5] as number }));
+                const bb = stream.dict["/BBox"];
                 if (Array.isArray(bb) && bb.length === 4) {
                   const p = new Path2D();
-                  p.rect(num({ n: bb[0] }), num({ n: bb[1] }), num({ n: bb[2] }) - num({ n: bb[0] }), num({ n: bb[3] }) - num({ n: bb[1] }));
+                  p.rect(num({ n: bb[0] as number }), num({ n: bb[1] as number }), num({ n: bb[2] as number }) - num({ n: bb[0] as number }), num({ n: bb[3] as number }) - num({ n: bb[1] as number }));
                   ctx.clip(p);
                 }
-                const fres = v.dict["/Resources"] ? await doc.resolve(v.dict["/Resources"]) : res;
-                const fops = tokenize(await doc.decodeStream(v));
+                const fres = stream.dict["/Resources"] ? await doc.resolve(stream.dict["/Resources"]!) as PdfDict : res;
+                const fops = tokenize(await doc.decodeStream(stream));
                 await execOps(fops, fres || res, ctx, st, depth + 1);
               } finally {
                 popState(ctx, st);
@@ -663,7 +666,7 @@ export function createRenderer(doc: PdfDoc) {
     else if (rot === 270) ctx.transform(0, 1, -1, 0, y1, -x0);
     else ctx.translate(-x0, -y0);
 
-    let res = pageRef.resourcesSrc ? await doc.resolve(pageRef.resourcesSrc) : null;
+    let res: PdfDict | null = pageRef.resourcesSrc ? await doc.resolve(pageRef.resourcesSrc) as PdfDict : null;
     res = res || {};
     let contents = pageRef.dict["/Contents"];
     contents = await doc.resolve(contents);
@@ -671,7 +674,7 @@ export function createRenderer(doc: PdfDoc) {
     const parts: Uint8Array[] = [];
     for (const s of streams) {
       const v = await doc.resolve(s);
-      if (v && v.$stream) parts.push(await doc.decodeStream(v));
+      if (v && (v as PdfStream).$stream) parts.push(await doc.decodeStream(v as PdfStream));
     }
     if (!parts.length) return cv; // blank page
     let total = 0;
@@ -690,7 +693,7 @@ export function createRenderer(doc: PdfDoc) {
       curX: 0, curY: 0,
       stack: [],
     };
-    await execOps(ops, res, ctx, st, 0);
+    await execOps(ops, res as PdfDict, ctx, st, 0);
     return cv;
   }
 

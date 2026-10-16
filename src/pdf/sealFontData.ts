@@ -90,4 +90,16 @@ export const FONT_B64 =
   "AZAAAAK8AAAAAAABEAAB9P4MAAAD6AAg/34EagAAAAEAAAAAAAAAAAAAAAAAAQPoAAADcALyAIYAkwCGAIYAkwCTAIYAkwCIAIYA" +
   "kwCTAJMAkwFDAUMARwFDAUMAMQAgAFwARwFuAV4BnQCaAKcAmgCaAKcApwCaAKcAmgCa" ;
 
-export const FONT_METRICS = {"upm": 1000, "bbox": [-991, -1050, 2930, 1810], "ascent": 1160, "descent": -288, "capHeight": 733, "italicAngle": 0.0, "stemV": 80, "cids": {"1": {"u": 32, "w": 224}, "2": {"u": 46, "w": 278}, "3": {"u": 48, "w": 555}, "4": {"u": 49, "w": 555}, "5": {"u": 50, "w": 555}, "6": {"u": 51, "w": 555}, "7": {"u": 52, "w": 555}, "8": {"u": 53, "w": 555}, "9": {"u": 54, "w": 555}, "10": {"u": 55, "w": 555}, "11": {"u": 56, "w": 555}, "12": {"u": 57, "w": 555}, "13": {"u": 80, "w": 633}, "14": {"u": 88, "w": 573}, "15": {"u": 89, "w": 531}, "16": {"u": 90, "w": 603}, "17": {"u": 97, "w": 563}, "18": {"u": 101, "w": 554}, "19": {"u": 102, "w": 325}, "20": {"u": 103, "w": 564}, "21": {"u": 111, "w": 606}, "22": {"u": 20849, "w": 1000}, "23": {"u": 31532, "w": 1000}, "24": {"u": 38913, "w": 1000}, "26": {"u": 12289, "w": 1000}, "27": {"u": 65292, "w": 1000}, "28": {"u": 65294, "w": 1000}}};
+interface GlyphMetrics { u: number; w: number }
+interface FontMetrics {
+  upm: number;
+  bbox: number[];
+  ascent: number;
+  descent: number;
+  capHeight: number;
+  italicAngle: number;
+  stemV: number;
+  cids: Record<string, GlyphMetrics>;
+}
+
+export const FONT_METRICS: FontMetrics = {"upm": 1000, "bbox": [-991, -1050, 2930, 1810], "ascent": 1160, "descent": -288, "capHeight": 733, "italicAngle": 0.0, "stemV": 80, "cids": {"1": {"u": 32, "w": 224}, "2": {"u": 46, "w": 278}, "3": {"u": 48, "w": 555}, "4": {"u": 49, "w": 555}, "5": {"u": 50, "w": 555}, "6": {"u": 51, "w": 555}, "7": {"u": 52, "w": 555}, "8": {"u": 53, "w": 555}, "9": {"u": 54, "w": 555}, "10": {"u": 55, "w": 555}, "11": {"u": 56, "w": 555}, "12": {"u": 57, "w": 555}, "13": {"u": 80, "w": 633}, "14": {"u": 88, "w": 573}, "15": {"u": 89, "w": 531}, "16": {"u": 90, "w": 603}, "17": {"u": 97, "w": 563}, "18": {"u": 101, "w": 554}, "19": {"u": 102, "w": 325}, "20": {"u": 103, "w": 564}, "21": {"u": 111, "w": 606}, "22": {"u": 20849, "w": 1000}, "23": {"u": 31532, "w": 1000}, "24": {"u": 38913, "w": 1000}, "26": {"u": 12289, "w": 1000}, "27": {"u": 65292, "w": 1000}, "28": {"u": 65294, "w": 1000}}};

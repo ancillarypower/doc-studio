@@ -6,6 +6,7 @@
 // and annotation appearances keep their colors; CMYK/JPEG2000 images are
 // left untouched.
 import { PdfDoc, deflate, raw, serializeToBytes, strBytes } from "./pdf.js";
+import type { LoadedPdfDoc } from "./pdf.js";
 import type { PdfDict, PdfRaw, PdfRef, PdfStream, PdfValue } from "./types";
 
 export interface PostprocessOptions {
@@ -21,12 +22,11 @@ export interface PostprocessResult { bytes: Uint8Array; stats: PostprocessStats 
 
 interface ImageOptions { grayscale: boolean; jpegQuality: number | null; jpegScale?: number }
 // /Indexed lookup: a byte string or a reference to a stream (ISO 32000-1 §8.6.6.3)
-interface IndexedInfo { base: string; hival: PdfValue; lookup: PdfRaw | PdfRef | null | undefined }
+interface IndexedInfo { base: string; hival: PdfValue; lookup: PdfValue | undefined }
 // re-encoded JPEGs are tagged so postprocessPdf can count them
 type ImageResult = PdfStream & { _jpg?: true };
 // /Contents is a stream reference or an array of them (ISO 32000-1 §7.7.3.3)
-type Contents = PdfRef | ContentsArray | null | undefined;
-interface ContentsArray extends Array<Contents> { $ref?: undefined }
+type Contents = PdfValue | undefined;
 interface FreshObject { num: number; gen: number; value: PdfValue }
 
 const lat1 = (bytes: Uint8Array) => { let s = ""; const CH = 0x8000; for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode(...bytes.subarray(i, i + CH)); return s; };
@@ -170,7 +170,7 @@ async function processImageValue(doc: PdfDoc, value: PdfStream, { grayscale, jpe
   } else if (Array.isArray(cs) && cs[0] === "/ICCBased") {
     let icc = null;
     try { icc = await doc.resolve(cs[1]); } catch { /* ignore */ }
-    const nn = icc && icc.$stream ? icc.dict["/N"] : icc?.["/N"];
+    const nn = icc && (icc as PdfStream).$stream ? (icc as PdfStream).dict["/N"] : icc && (icc as PdfDict)["/N"];
     if (nn === 1) kind = "gray"; else if (nn === 3) kind = "rgb"; else if (nn === 4) kind = "cmyk";
   }
   if (!kind) return null;
@@ -221,8 +221,9 @@ async function processImageValue(doc: PdfDoc, value: PdfStream, { grayscale, jpe
     let pal = null;
     const lk = indexed!.lookup;
     try {
-      if (lk && lk.$raw) {
-        const b = lk.$raw instanceof Uint8Array ? lk.$raw : strBytes(lk.$raw);
+      if (lk && (lk as PdfRaw).$raw) {
+        const lookup = lk as PdfRaw;
+        const b = lookup.$raw instanceof Uint8Array ? lookup.$raw : strBytes(lookup.$raw);
         if (b[0] === 60) { // hex string <...>
           const hexs = lat1(b.slice(1, b.length - 1)).replace(/[^0-9A-Fa-f]/g, "");
           pal = new Uint8Array(Math.floor(hexs.length / 2));
@@ -245,9 +246,9 @@ async function processImageValue(doc: PdfDoc, value: PdfStream, { grayscale, jpe
           }
           pal = new Uint8Array(tmp);
         }
-      } else if (lk && lk.$ref !== undefined) {
+      } else if (lk && (lk as PdfRef).$ref !== undefined) {
         const s = await doc.resolve(lk);
-        if (s && s.$stream) pal = await doc.decodeStream(s);
+        if (s && (s as PdfStream).$stream) pal = await doc.decodeStream(s as PdfStream);
       }
     } catch { return null; }
     if (!pal || pal.length % 3 !== 0) return null;
@@ -283,7 +284,7 @@ async function processImageValue(doc: PdfDoc, value: PdfStream, { grayscale, jpe
 }
 
 // ---------- full rewrite writer ----------
-function writeFresh(doc: PdfDoc, objs: FreshObject[]): Uint8Array {
+function writeFresh(doc: LoadedPdfDoc, objs: FreshObject[]): Uint8Array {
   const chunks: Uint8Array[] = [];
   const push = (c: Uint8Array) => chunks.push(c);
   let pos = 0;
@@ -332,10 +333,10 @@ export async function postprocessPdf(bytes: Uint8Array, { grayscale = false, jpe
   const contentRefs = new Set<number>();
   const addContents = async (c: Contents): Promise<void> => {
     if (!c) return;
-    if (c.$ref !== undefined) {
+    if ((c as PdfRef).$ref !== undefined) {
       let r = null;
       try { r = await doc.resolve(c); } catch { return; }
-      if (r && r.$stream) { contentRefs.add(c.$ref); return; }
+      if (r && (r as PdfStream).$stream) { contentRefs.add((c as PdfRef).$ref); return; }
       if (Array.isArray(r)) { for (const e of r) await addContents(e); }
       return;
     }
@@ -354,34 +355,35 @@ export async function postprocessPdf(bytes: Uint8Array, { grayscale = false, jpe
     if (onProgress && (done % 10 === 0 || done === entries.length)) onProgress(done, entries.length);
     let value;
     try { value = await doc.getObject(num); } catch { stats.dropped++; continue; }
-    if (value && typeof value === "object" && !Array.isArray(value) && !value.$raw && !value.$ref) {
-      if (value.$stream) {
-        const t = value.dict["/Type"];
+    if (value && typeof value === "object" && !Array.isArray(value) && !(value as PdfRaw).$raw && !(value as PdfRef).$ref) {
+      if ((value as PdfStream).$stream) {
+        const stream = value as PdfStream;
+        const t = stream.dict["/Type"];
         if (t === "/XRef" || t === "/ObjStm") { stats.dropped++; continue; }
-        if (value.dict["/Subtype"] === "/Image") {
+        if (stream.dict["/Subtype"] === "/Image") {
           if (grayscale || jpegQuality != null) {
             let nv = null;
-            try { nv = await processImageValue(doc, value, { grayscale, jpegQuality, jpegScale }); } catch { nv = null; }
+            try { nv = await processImageValue(doc, stream, { grayscale, jpegQuality, jpegScale }); } catch { nv = null; }
             if (nv) { value = nv; stats.images++; if (nv._jpg) stats.jpegs++; }
           }
-        } else if (grayscale && (contentRefs.has(num) || value.dict["/Subtype"] === "/Form")) {
-          let f = value.dict["/Filter"];
+        } else if (grayscale && (contentRefs.has(num) || stream.dict["/Subtype"] === "/Form")) {
+          let f = stream.dict["/Filter"];
           if (Array.isArray(f)) f = f.length === 1 ? f[0] : "multi";
           if (f === undefined || f === "/FlateDecode") {
             try {
-              const decoded = await doc.decodeStream(value);
+              const decoded = await doc.decodeStream(stream);
               const rewritten = grayContent(lat1(decoded));
               const packed = await deflate(fromLat1(rewritten));
-              const nd = { ...value.dict, "/Filter": "/FlateDecode", "/Length": packed.length };
+              const nd: PdfDict = { ...stream.dict, "/Filter": "/FlateDecode", "/Length": packed.length };
               delete nd["/DecodeParms"];
-              value = { $stream: true, dict: nd, data: packed };
+              value = { $stream: true as const, dict: nd, data: packed };
               stats.contents++;
             } catch { /* keep original stream */ }
           }
         }
-      } else if (value["/Linearized"] !== undefined) { stats.dropped++; continue; }
+      } else if ((value as PdfDict)["/Linearized"] !== undefined) { stats.dropped++; continue; }
     }
-    objs.push({ num, gen: entry.gen || 0, value });
+    objs.push({ num, gen: entry.type === 1 ? entry.gen || 0 : 0, value });
   }
   const outBytes = writeFresh(doc, objs);
   return { bytes: outBytes, stats };
