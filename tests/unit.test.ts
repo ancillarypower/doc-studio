@@ -37,6 +37,9 @@ describe("fixtures × engine", () => {
       const doc = await PdfDoc.load(load("all-triggers.pdf"));
       const pages = await doc.getPageRefs();
 
+      // Type-only class declarations must not introduce new own properties.
+      expect(Object.keys(new PdfDoc(new Uint8Array()))).toEqual(["bytes", "xref", "trailer", "cache", "objStmCache"]);
+      expect(Object.hasOwn(doc, "crypt")).toBe(false);
       expect(doc.xref.size).toBe(28);
       expect(doc.trailer["/Root"]).toEqual(ref(1));
       expect(pages.map(({ index, ref: pageRef, gen, box, rotate }) => ({ index, ref: pageRef, gen, box, rotate })))

@@ -59,8 +59,8 @@ const WS = new Set([0, 9, 10, 12, 13, 32]);
 const DELIM = new Set([40, 41, 60, 62, 91, 93, 123, 125, 47, 37]); // ()<>[]{}/%
 
 class Parser {
-  b: Uint8Array;
-  p: number;
+  declare b: Uint8Array;
+  declare p: number;
   constructor(bytes: Uint8Array, pos: number) { this.b = bytes; this.p = pos; }
   skipWs() {
     const b = this.b;
@@ -220,13 +220,13 @@ function unpredict(data: Uint8Array, params: PdfDict | null): Uint8Array {
 }
 
 export class PdfDoc {
-  bytes: Uint8Array;
-  xref: Map<number, XrefEntry>;
-  trailer: PdfDict | null;
-  cache: Map<number, PdfValue>;
-  objStmCache: Map<number, ObjectStream>;
-  crypt?: PdfCrypt;
-  startxrefPos?: number;
+  declare bytes: Uint8Array;
+  declare xref: Map<number, XrefEntry>;
+  declare trailer: PdfDict | null;
+  declare cache: Map<number, PdfValue>;
+  declare objStmCache: Map<number, ObjectStream>;
+  declare crypt?: PdfCrypt;
+  declare startxrefPos?: number;
 
   constructor(bytes: Uint8Array) {
     this.bytes = bytes;
@@ -260,7 +260,7 @@ export class PdfDoc {
     // newest first, then walk /Prev filling gaps
     let p: number | null | undefined = pos;
     let first = true;
-    const seen = new Set();
+    const seen = new Set<PdfValue>();
     while (p !== null && p !== undefined && !seen.has(p)) {
       seen.add(p);
       const { entries, trailer } = await this.readXrefAt(p);
@@ -399,7 +399,7 @@ export class PdfDoc {
   async getObject(num: number): Promise<PdfValue> {
     if (this.cache.has(num)) return this.cache.get(num)!;
     const entry = this.xref.get(num);
-    if (!entry) throw new PdfError("Object " + num + " not found");
+    if (!entry || (entry.type as number) === 0) throw new PdfError("Object " + num + " not found");
     let value: PdfValue;
     if (entry.type === 1) {
       const parsed = await this.parseIndirectAt(entry.offset);
@@ -522,10 +522,10 @@ export function serializeToBytes(v: PdfValue | undefined): Uint8Array {
 
 // ---------- incremental writer ----------
 export class PdfUpdate {
-  doc: LoadedPdfDoc;
-  next: number;
-  added: { num: number; gen: number; value: PdfValue }[];
-  replaced: { num: number; gen: number; value: PdfValue }[];
+  declare doc: LoadedPdfDoc;
+  declare next: number;
+  declare added: { num: number; gen: number; value: PdfValue }[];
+  declare replaced: { num: number; gen: number; value: PdfValue }[];
 
   constructor(doc: LoadedPdfDoc) {
     this.doc = doc;
