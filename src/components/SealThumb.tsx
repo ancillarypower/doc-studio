@@ -4,7 +4,7 @@ import { type SealState } from "../studio/stateTypes";
 // Seal thumbnail with a one-shot scissor animation when blank margins were auto-trimmed:
 // the original image shows with dashed cut lines + a ✂️ sweep, then fades to the trimmed result.
 export function SealThumb({ seal }: { seal: SealState }) {
-  const t = seal.info?.trimmed!;
+  const t = seal.info?.trimmed;
   const hasTrim = !!t && t.top + t.left + t.bottom + t.right > 0 && !!seal.origUrl;
   // slower cut with a random 1–3 s dwell at the corner (the overlay remounts per seal via key)
   const dwell = useMemo(() => 1 + Math.random() * 2, [seal.url]);
@@ -16,8 +16,8 @@ export function SealThumb({ seal }: { seal: SealState }) {
     const ow = origW * k, oh = origH * k;
     frame = {
       ow, oh,
-      l: (t.left / origW) * ow, r: (t.right / origW) * ow,
-      tp: (t.top / origH) * oh, b: (t.bottom / origH) * oh,
+      l: (t!.left / origW) * ow, r: (t!.right / origW) * ow,
+      tp: (t!.top / origH) * oh, b: (t!.bottom / origH) * oh,
     };
   }
   return (
