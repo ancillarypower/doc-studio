@@ -1,5 +1,4 @@
 import Diagram from "../components/Diagram";
-import { type EngineData } from "../types";
 import { Fold, SectionTitle } from "../components/ui";
 import { useStudioContext } from "../studio/context";
 
@@ -60,7 +59,7 @@ export function PreviewSection() {
         </div>
         {hasConflicts && (
           <div className="shrink-0 rounded-xl border border-[#EAB308] bg-[#FEF9C3] px-4 py-3 text-sm text-[#854D0E] shadow-[0_2px_8px_rgba(234,179,8,0.25)] sm:w-72">
-            <b>部分頁面找不到安全的用印位置</b>（頁對：{plan!.conflicts.map((c: EngineData) => c.pages ? c.pages.join("–") : "整份").join("、")}）。
+            <b>部分頁面找不到安全的用印位置</b>（頁對：{plan!.conflicts.map((c) => c.pages ? c.pages.join("–") : "整份").join("、")}）。
               建議縮小印章尺寸、減少章數或調整頁碼對齊。
             <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs">
               <input type="checkbox" className="accent-[#CA8A04]" checked={skipConflicts} onChange={(e) => setSkipConflicts(e.target.checked)} />

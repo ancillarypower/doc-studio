@@ -7,11 +7,12 @@
 // Pages shown are requested via onNeedThumb(pageIdx); until its real thumbnail
 // arrives, a page keeps the old placeholder card (fake text lines).
 import { Fragment, useEffect, useState } from "react";
-import type { EngineData, Method } from "../types";
+import type { Method } from "../types";
+import type { DiagramPage, PageInfo } from "../studio/stateTypes";
 
 export interface DiagramProps {
-  pages: EngineData[];
-  planView: EngineData;
+  pages: PageInfo[];
+  planView: DiagramPage[];
   joined: boolean;
   method: Method | null;
   thumbs: Record<number, string>;
@@ -69,7 +70,7 @@ export default function Diagram({ pages, planView, joined, method, thumbs, onNee
           // so slices are drawn stretched to the sliver width — the seal still reads
           // contiguously across the stack. (The 浮水印 layer is full-page width and is
           // excluded from slice detection.)
-          const sliceWpts = (view?.seals || []).map((s: EngineData) => s.w).filter((wpt: number) => wpt < p.w * 0.9);
+          const sliceWpts = (view?.seals || []).map((s) => s.w).filter((wpt) => wpt < p.w * 0.9);
           const slicePx = sliceWpts.length ? Math.min(...sliceWpts) * scale : 0;
           const sliver = Math.max(slicePx, 10);
           const stacked = stackB && i > 0;
@@ -110,7 +111,7 @@ export default function Diagram({ pages, planView, joined, method, thumbs, onNee
                 </div>
               )}
               {/* seal parts (plan y is bottom-based PDF pt; CSS top is top-based: flip) */}
-              {view?.seals.map((s: EngineData, k: number) => {
+              {view?.seals.map((s, k) => {
                 // full-page layers (浮水印) never stretch; in stack mode a slice is drawn
                 // stretched to the exposed sliver so the seal reconstructs legibly
                 const fullPage = s.w >= p.w * 0.9;
@@ -178,7 +179,7 @@ export default function Diagram({ pages, planView, joined, method, thumbs, onNee
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-sm text-[#A1906F]">頁面渲染中…</div>
                 )}
-                {view?.seals.map((s: EngineData, k: number) => (
+                {view?.seals.map((s, k) => (
                   <img
                     key={k} src={s.dataURL} alt="" draggable={false}
                     className="pointer-events-none absolute select-none"
