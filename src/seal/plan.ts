@@ -20,7 +20,7 @@ export interface SliceNote { type: "slices"; slot: number; angle: number; cy: nu
 export interface VariationNote { type: "variation-limited"; pair: number }
 export type PlanNote = PairNote | SliceNote | VariationNote;
 
-export type PlanConflict = { type: "pair"; pages: [number, number] } | { type: "document" };
+export type PlanConflict = { type: "pair"; pages: [number, number] } | { type: "document"; pages?: undefined };
 
 export interface PlacementResult { plans: PagePlacement[]; notes: PlanNote[]; conflicts: PlanConflict[] }
 

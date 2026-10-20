@@ -11,13 +11,13 @@ export function SealThumb({ seal }: { seal: SealState }) {
   let frame = null;
   if (hasTrim) {
     const box = 56;
-    const { origW, origH } = seal.info;
+    const { origW, origH } = seal.info as typeof seal.info & { origW: number; origH: number };
     const k = Math.min(box / origW, box / origH);
     const ow = origW * k, oh = origH * k;
     frame = {
       ow, oh,
-      l: (t.left / origW) * ow, r: (t.right / origW) * ow,
-      tp: (t.top / origH) * oh, b: (t.bottom / origH) * oh,
+      l: (t!.left / origW) * ow, r: (t!.right / origW) * ow,
+      tp: (t!.top / origH) * oh, b: (t!.bottom / origH) * oh,
     };
   }
   return (

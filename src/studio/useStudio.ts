@@ -1,20 +1,21 @@
 // All app state, effects and actions (lifted verbatim from the artifact's App component).
 // Sections read it through StudioContext, so the render tree can be split per 區 without prop drilling.
-import { type Align, type EngineData, type Lang, type Method, type SanOptions, type ScanState } from "../types";
+import { type Align, type Lang, type Method, type SanOptions, type ScanState } from "../types";
 import { LABEL_ASCENT, LABEL_DESCENT } from "../pdf/font.js";
 import { MM, labelX, mulberry32, planPlacement, type PairNote, type SliceNote } from "../seal/plan.js";
 import { PdfDoc, PdfError, deflate } from "../pdf/pdf.js";
-import type { PdfStream } from "../pdf/types";
+import type { LoadedPdfDoc } from "../pdf/pdf.js";
+import type { PdfPageRef, PdfStream } from "../pdf/types";
 import { SAN_DEFAULT, sanActive, sanDefaultsFor, sanSummary } from "../components/ScanPanel";
 import { applyOpacity, canvasToPdfImage, halfBoundaries, inkCoverage, loadSealCanvas, rotateQuarter, rotateSeal, sliceBoundaries, splitVertical, toGrayscale } from "../seal/image.js";
 import { buildLabels, generateSealedPdf } from "../seal/generate.js";
 import { createRenderer } from "../pdf/render.js";
 import { decryptPdf, probeEncryption } from "../pdf/crypt.js";
-import { postprocessPdf } from "../pdf/postprocess.js";
+import { postprocessPdf, type PostprocessStats } from "../pdf/postprocess.js";
 import { sanitizePdf, scanPdf } from "../pdf/sanitize.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ALIGN_LABELS, APP_VERSION, MAX_PAGES, METHOD_NAMES, UNIT_BYTES } from "../lib/constants";
-import { type FoldState, type LockedState, type LogEntry, type PdfInfo, type PlanPage, type PpResult, type ResultState, type SealState, type SizeUnit, type WmColor } from "./stateTypes";
+import { type DiagramPage, type FoldState, type LockedState, type LogEntry, type PdfInfo, type PlanPage, type PpResult, type ResultState, type SealPart, type SealState, type SizeUnit, type UnlockInfo, type WmColor } from "./stateTypes";
 import { b64ToBytes, buildWatermarkCanvas, bytesToB64, clampNum, clampTarget, errText, fmtBytes, fmtTarget, prepSealCanvas, repairMojibake, sanitizeBase } from "../lib/helpers";
 
 export function useStudio() {
@@ -124,8 +125,8 @@ export function useStudio() {
 
   // real page thumbnails for the 配置預覽 diagram: rendered on demand from the
   // actual PDF content, one page at a time so the UI never blocks
-  const pdfDocRef = useRef<{ doc: EngineData; pageRefs: EngineData[] } | null>(null); // { doc, pageRefs } of the current upload
-  const rendererRef = useRef<EngineData>(null);
+  const pdfDocRef = useRef<{ doc: LoadedPdfDoc; pageRefs: PdfPageRef[] } | null>(null); // { doc, pageRefs } of the current upload
+  const rendererRef = useRef<ReturnType<typeof createRenderer> | null>(null);
   const [thumbs, setThumbs] = useState<Record<number, string>>({}); // pageIdx → dataURL
   const thumbGen = useRef(0); // bumped on every new upload: stale renders stop
   const thumbQ = useRef<{ pending: number[]; queued: Set<number>; running: boolean }>({ pending: [], queued: new Set(), running: false });
@@ -142,7 +143,7 @@ export function useStudio() {
         if (gen !== thumbGen.current || !pdfDocRef.current) break;
         const idx = q.pending.shift()!;
         try {
-          const cv = await rendererRef.current.renderPage(pdfDocRef.current.pageRefs[idx], 380);
+          const cv = await rendererRef.current!.renderPage(pdfDocRef.current.pageRefs[idx], 380);
           if (cv && gen === thumbGen.current) {
             let url = cv.toDataURL("image/webp", 0.85);
             if (!url.startsWith("data:image/webp")) url = cv.toDataURL();
@@ -159,7 +160,8 @@ export function useStudio() {
   const renderZoomPage = useCallback(async (pageIdx: number, width = 1200) => {
     if (!pdfDocRef.current || !rendererRef.current) return null;
     try {
-      const cv = await rendererRef.current.renderPage(pdfDocRef.current.pageRefs[pageIdx], width);
+      const cv = await rendererRef.current!.renderPage(pdfDocRef.current.pageRefs[pageIdx], width);
+      if (!cv) return null;
       let url = cv.toDataURL("image/webp", 0.9);
       if (!url.startsWith("data:image/webp")) url = cv.toDataURL();
       return url;
@@ -183,7 +185,7 @@ export function useStudio() {
   }
 
   // load an unencrypted PDF into 壹區 (a fresh upload, or a decrypted file flowing back in)
-  async function loadPlainPdf(bytes: Uint8Array, displayName: string, unlock: EngineData = null) {
+  async function loadPlainPdf(bytes: Uint8Array, displayName: string, unlock: UnlockInfo | null = null) {
     const doc = await PdfDoc.load(bytes);
     const pageRefs = await doc.getPageRefs();
     if (pageRefs.length > MAX_PAGES) throw new PdfError(`頁數過多（${pageRefs.length} 頁，上限 ${MAX_PAGES} 頁）`);
@@ -327,7 +329,7 @@ export function useStudio() {
         setTimeout(() => { pwInputRef.current?.focus(); pwInputRef.current?.select(); }, 60);
         return;
       }
-      const unlock = { kind: entry.probe.ownerOnly ? "perm" : "pw", algo: dec.algo, as: dec.as, denied: dec.denied };
+      const unlock: UnlockInfo = { kind: entry.probe.ownerOnly ? "perm" : "pw", algo: dec.algo, as: dec.as, denied: dec.denied };
       const next = { ...entry, stage: "unlocked", pwError: null, cached: { bytes: dec.bytes, unlock } };
       setLocked(next);
       addLog(unlock.kind === "perm"
@@ -424,8 +426,8 @@ export function useStudio() {
       const res = planPlacement({ pages, seal: { w: worstW, h: worstH }, method: "A", ...planOpts });
       // rebuild placements with actual rotated canvases, centered at planned cy
       const pagesPlan: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
-      const diagram: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
-      const parts: EngineData[] = []; // canvases per seal part
+      const diagram: DiagramPage[] = pages.map(() => ({ seals: [], label: null }));
+      const parts: SealPart[] = []; // canvases per seal part
       res.notes.filter((n): n is PairNote => n.type === "pair").forEach((note) => {
         const i = note.pair - 1;
         const slot = note.slot ?? 0;
@@ -479,8 +481,8 @@ export function useStudio() {
     const res = planPlacement({ pages, seal: { w: N2 * sliceWmm * MM, h: worstH }, method, ...planOpts });
     const sliceNotes = res.notes.filter((n): n is SliceNote => n.type === "slices");
     const pagesPlan: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
-    const diagram: PlanPage[] = pages.map(() => ({ seals: [], label: null }));
-    const parts: EngineData[] = [];
+    const diagram: DiagramPage[] = pages.map(() => ({ seals: [], label: null }));
+    const parts: SealPart[] = [];
     const blanksSet = new Set<number>();
     strips.forEach((st, j) => {
       const note = sliceNotes.find((n) => (n.slot ?? 0) === j);
@@ -667,7 +669,7 @@ export function useStudio() {
       // optional document post-processing (grayscale / compression) on the base file,
       // before the seal overlay is appended
       let srcBytes = pdfInfo.bytes;
-      let ppStats: EngineData = null;
+      let ppStats: PostprocessStats | null = null;
       let ppRes: PpResult | null = null;
       if (grayDoc || compressPdf) {
         setBusy("文件後製處理…");
@@ -762,7 +764,7 @@ export function useStudio() {
 
   // hidden E2E hook (used by automated tests)
   useEffect(() => {
-    window.__sealTest = async (pdfB64: string, pngB64: string, opts: EngineData = {}) => {
+    window.__sealTest = async (pdfB64: string, pngB64: string, opts: SealTestOpts = {}) => {
       const bytes = b64ToBytes(pdfB64);
       const doc = await PdfDoc.load(bytes);
       const pageRefs = await doc.getPageRefs();

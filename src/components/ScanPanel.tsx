@@ -1,7 +1,8 @@
 // 貳區「檔案狀態」：只列出上傳檔案裡真的偵測到的項目，每項附淨化選項（產出時套用）。
 // 淨化 = 整份重寫，所以任何一項勾選都會連帶「只保留現行版本」。
 import type { ReactNode } from "react";
-import type { EngineData, LinkMode, SanBoolKey, SanOptions, ScanState } from "../types";
+import type { LinkMode, SanBoolKey, SanOptions, ScanState } from "../types";
+import type { InfoField, ScanReport } from "../pdf/sanitize";
 
 export const SAN_DEFAULT: SanOptions = {
   meta: false, history: false, js: false, attach: false, links: "keep",
@@ -14,7 +15,7 @@ const SAN_LABEL: Record<SanBoolKey, string> = {
 };
 
 // 上傳掃描發現 JavaScript／附件／Launch → 預設勾選淨化
-export function sanDefaultsFor(rep: EngineData): SanOptions {
+export function sanDefaultsFor(rep: ScanReport): SanOptions {
   return { ...SAN_DEFAULT, js: !!rep?.js.detected, attach: !!rep?.attach.detected };
 }
 export const sanForcesRewrite = (san: SanOptions): boolean => SAN_BOOL.some((k) => k !== "history" && san[k]) || san.links !== "keep";
@@ -102,7 +103,7 @@ export default function ScanPanel({ scan, san, setSan }: { scan: ScanState | nul
   add(r.meta.detected, "中繼資料", (
     <Row key="meta" title="中繼資料"
       summary={[
-        ...r.meta.fields.map((f: EngineData) => `${f.label}：${f.value}`),
+        ...r.meta.fields.map((f: InfoField) => `${f.label}：${f.value}`),
         r.meta.xmpCount ? `XMP ${r.meta.xmpCount} 份${r.meta.xmpTool ? `（${r.meta.xmpTool}）` : ""}` : null,
         r.meta.hasId ? "文件 ID" : null,
       ].filter(Boolean).join(" · ")}

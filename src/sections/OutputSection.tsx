@@ -1,4 +1,3 @@
-import { type Align } from "../types";
 import { ALIGN_LABELS, TARGET_RANGE, UNIT_BYTES } from "../lib/constants";
 import { Fold, ResetToggle, SectionTitle } from "../components/ui";
 import { type SizeUnit } from "../studio/stateTypes";
@@ -186,7 +185,7 @@ export function OutputSection() {
             <div className="mb-1 text-xs font-bold tracking-widest text-[#6E6250]">產出摘要</div>
             <ul className="space-y-1 text-[#4A4132]">
               <li>方式：{result.report.method === "A" ? "摺頁橫蓋法（成對半章）" : result.report.method === "C" ? "摺頁直蓋法（成對半章・直向）" : "側邊裝訂蓋章法（全份切片）"}{result.report.sealCount > 1 ? ` · 章數 ${result.report.sealCount}` : ""}</li>
-              <li>頁碼：{result.report.lang === "tc" ? "繁體中文" : "English"} · {ALIGN_LABELS[result.report.align as Align] || result.report.align} · {result.report.labelSize} pt · 下緣上方 {result.report.labelBottom} mm{result.report.labelRot ? ` · 旋轉 ${result.report.labelRot}°` : ""}</li>
+              <li>頁碼：{result.report.lang === "tc" ? "繁體中文" : "English"} · {ALIGN_LABELS[result.report.align] || result.report.align} · {result.report.labelSize} pt · 下緣上方 {result.report.labelBottom} mm{result.report.labelRot ? ` · 旋轉 ${result.report.labelRot}°` : ""}</li>
               <li>印章：{result.report.grayscale ? "灰階" : "原色"}{result.report.sealOpacity < 100 ? ` · 淡化 ${result.report.sealOpacity}%` : ""} · 旋轉 {result.report.rotMin}°～{result.report.rotMax}° 隨機</li>
               {result.report.wm && <li>浮水印：「{result.report.wm.text}」 · {result.report.wm.size} pt · 淡化 {result.report.wm.opacity}% · {result.report.wm.angle}°{result.report.wm.tile ? " · 鋪滿全頁" : ""}</li>}
               <li>頁數核對：{result.report.verified ? `✅ ${result.report.count} 頁，與原檔一致` : "⚠️ 頁數不符，請勿使用"}</li>

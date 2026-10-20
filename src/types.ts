@@ -1,10 +1,6 @@
 // Shared types for the 文件工坊 UI.
-// The PDF / seal engines (src/pdf, src/seal) are still untyped JavaScript in phase A;
-// values that flow straight out of them are typed as EngineData until phase B adds real types.
+// Shared application types and PDF scan state.
 import type { ScanReport } from "./pdf/sanitize";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type EngineData = any;
 
 export type Method = "A" | "B" | "C";
 export type Align = "left" | "center-left" | "center" | "center-right" | "right";
