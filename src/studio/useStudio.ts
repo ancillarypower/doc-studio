@@ -839,8 +839,8 @@ export function useStudio() {
           if (f === "/FlateDecode") {
             try {
               const t = lat1(await doc.decodeStream(stream));
-              const colr = t.match(/[\d.\-]+ [\d.\-]+ [\d.\-]+ (rg|RG)\b|[\d.\-]+ [\d.\-]+ [\d.\-]+ [\d.\-]+ (k|K)\b/g);
-              const gray = t.match(/[\d.\-]+ (g|G)\b/g);
+              const colr = t.match(/[\d.-]+ [\d.-]+ [\d.-]+ (rg|RG)\b|[\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ (k|K)\b/g);
+              const gray = t.match(/[\d.-]+ (g|G)\b/g);
               if (colr) colorOps += colr.length;
               if (gray) grayOps += gray.length;
             } catch { /* not decodable */ }

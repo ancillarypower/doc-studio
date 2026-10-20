@@ -27,6 +27,7 @@ export default function Diagram({ pages, planView, joined, method, thumbs, onNee
   // click-to-read overlay: one page rendered large enough to actually read
   const [zoomIdx, setZoomIdx] = useState<number | null>(null);
   const [zoomUrl, setZoomUrl] = useState<string | null>(null);
+  const zoomOpen = zoomIdx != null;
   useEffect(() => {
     if (zoomIdx == null || !onRenderPage) return;
     let live = true;
@@ -35,7 +36,7 @@ export default function Diagram({ pages, planView, joined, method, thumbs, onNee
     return () => { live = false; };
   }, [zoomIdx, onRenderPage]);
   useEffect(() => {
-    if (zoomIdx == null) return;
+    if (!zoomOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setZoomIdx(null);
       else if (e.key === "ArrowLeft") setZoomIdx((z) => (z != null && z > 0 ? z - 1 : z));
@@ -43,7 +44,7 @@ export default function Diagram({ pages, planView, joined, method, thumbs, onNee
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [zoomIdx == null, pages.length]);
+  }, [zoomOpen, pages.length]);
   // 側邊裝訂 + 併攏: pages overlap like a squared-up stack, each exposing its right-edge slice
   const stackB = joined && method === "B";
 
