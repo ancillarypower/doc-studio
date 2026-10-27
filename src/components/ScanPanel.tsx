@@ -73,7 +73,7 @@ function Row({ tone = "info", title, summary, note, control }: { tone?: Tone; ti
   );
 }
 
-const Only = (_props: { children?: ReactNode }) => (
+const Only = () => (
   <span className="rounded-full border border-[#E3D9C6] bg-white px-3 py-1 text-xs font-bold text-[#8A7C66]">僅提醒</span>
 );
 

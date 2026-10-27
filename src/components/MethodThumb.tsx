@@ -37,7 +37,7 @@ export function MethodThumb(props: MethodThumbProps) {
   );
 }
 
-export function MethodThumbBox({ kind, sealUrl, aspect, pageCount }: MethodThumbProps) {
+export function MethodThumbBox({ kind, sealUrl, aspect }: MethodThumbProps) {
   const url = sealUrl || PLACEHOLDER_SEAL;
   const ar = aspect > 0 ? aspect : 1;
   const W = 120, H = 85; // larger thumbnail: text column yields width to the diagram

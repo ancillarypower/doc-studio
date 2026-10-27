@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useRef } from "react";
 import { type SealState } from "../studio/stateTypes";
 
 // Seal thumbnail with a one-shot scissor animation when blank margins were auto-trimmed:
@@ -7,7 +7,9 @@ export function SealThumb({ seal }: { seal: SealState }) {
   const t = seal.info?.trimmed;
   const hasTrim = !!t && t.top + t.left + t.bottom + t.right > 0 && !!seal.origUrl;
   // slower cut with a random 1–3 s dwell at the corner (the overlay remounts per seal via key)
-  const dwell = useMemo(() => 1 + Math.random() * 2, [seal.url]);
+  const dwellRef = useRef<{ url: string; v: number } | null>(null);
+  if (!dwellRef.current || dwellRef.current.url !== seal.url) dwellRef.current = { url: seal.url, v: 1 + Math.random() * 2 };
+  const dwell = dwellRef.current.v;
   let frame = null;
   if (hasTrim) {
     const box = 56;
