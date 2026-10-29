@@ -20,6 +20,15 @@ test("brand: title and header read 文件工坊", async ({ page }) => {
   await expect(page.locator('[data-section="header"] h1')).toHaveText("文件工坊");
 });
 
+// #6: forward optional titles without adding an attribute to untitled pills.
+test("page-number OptionPill buttons preserve optional titles", async ({ page }) => {
+  await openSettled(page, NEW_URL);
+  const section = page.locator('[data-section="s7-pagenum"]');
+  await expect(section.getByRole("button", { name: "左下斜角", exact: true })).toHaveAttribute("title", "文字置於左下角，順時針旋轉 45° 貼入角落");
+  await expect(section.getByRole("button", { name: "右下斜角", exact: true })).toHaveAttribute("title", "文字置於右下角，逆時針旋轉 45° 貼入角落");
+  expect(await section.getByRole("button", { name: "English", exact: true }).getAttribute("title")).toBeNull();
+});
+
 test("all-triggers fixture: 貳區 lists every scanner finding", async ({ page }) => {
   await openSettled(page, NEW_URL);
   await uploadPdf(page, "fixtures/all-triggers.pdf");
