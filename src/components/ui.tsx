@@ -54,11 +54,12 @@ export function Fold({ open, children }: { open: boolean; children?: ReactNode }
   );
 }
 
-export function OptionPill({ active, onClick, children, badge }: { active?: boolean; onClick?: () => void; children?: ReactNode; badge?: ReactNode; title?: string }) {
+export function OptionPill({ active, onClick, children, badge, title }: { active?: boolean; onClick?: () => void; children?: ReactNode; badge?: ReactNode; title?: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={`relative rounded-full border px-3.5 py-1.5 text-sm transition-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-[#BE3A2B] ${
         active ? "border-[#BE3A2B] bg-[#BE3A2B] font-bold text-white shadow-xs" : "border-[#D9CCB4] bg-white text-[#4A4132] hover:border-[#BE3A2B88]"
       }`}
@@ -70,3 +71,4 @@ export function OptionPill({ active, onClick, children, badge }: { active?: bool
     </button>
   );
 }
+

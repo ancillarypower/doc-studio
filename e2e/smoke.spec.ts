@@ -29,7 +29,7 @@ test("page-number OptionPill buttons preserve optional titles", async ({ page })
   expect(await section.getByRole("button", { name: "English", exact: true }).getAttribute("title")).toBeNull();
 });
 
- test("all-triggers fixture: 貳區 lists every scanner finding", async ({ page }) => {
+test("all-triggers fixture: 貳區 lists every scanner finding", async ({ page }) => {
   await openSettled(page, NEW_URL);
   await uploadPdf(page, "fixtures/all-triggers.pdf");
   const scan = page.locator('[data-section="s2-scan"]');
