@@ -246,8 +246,8 @@ export default function ScanPanel({ scan, san, setSan }: { scan: ScanState | nul
         ht.sameOps ? `與底色同色：${fmtPages(ht.samePages)}（${ht.sameOps} 處）` : null,
         ht.coveredOps ? `被圖片或色塊蓋住：${fmtPages(ht.coveredPages)}（${ht.coveredOps} 處）` : null,
       ].filter(Boolean).join(" · ")}
-      note="粗略偵測，可能誤判；蓋住不等於刪除，文字仍可被複製"
-      control={<Only />}
+      note={<span className="font-bold text-[#7A5A1E]">本工具不會移除疑似藏字；即使全部勾選淨化，也不保證清除這類內容。偵測可能誤判或漏判；蓋住不等於刪除，文字仍可能被搜尋或複製。涉及敏感資料時，請使用具真正遮蔽刪除功能的工具，並另行驗證輸出。</span>}
+      control={<span className="rounded-full border border-[#C98A2F] bg-[#FCF4E3] px-3 py-1 text-xs font-bold text-[#7A5A1E]">僅偵測，不移除</span>}
     />
   ));
 
