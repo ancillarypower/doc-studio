@@ -42,6 +42,28 @@ test("all-triggers fixture: 貳區 lists every scanner finding", async ({ page }
   }
 });
 
+// #8: rough hidden-text findings must never imply safe removal.
+test("hidden text stays detection-only when all sanitization options are selected", async ({ page }) => {
+  await openSettled(page, NEW_URL);
+  await uploadPdf(page, "fixtures/all-triggers.pdf");
+  const scan = page.locator('[data-section="s2-scan"]');
+  const hidden = scan.getByRole("listitem").filter({ hasText: "同色文字、被蓋住的文字（粗略）" });
+  const signature = scan.getByRole("listitem").filter({ hasText: "數位簽章" });
+  const invisible = scan.getByRole("listitem").filter({ hasText: "隱形文字" });
+  const warning = "本工具不會移除疑似藏字；即使全部勾選淨化，也不保證清除這類內容。偵測可能誤判或漏判；蓋住不等於刪除，文字仍可能被搜尋或複製。涉及敏感資料時，請使用具真正遮蔽刪除功能的工具，並另行驗證輸出。";
+  await expect(hidden.getByText(warning, { exact: true })).toBeVisible();
+  await expect(hidden.getByText("僅偵測，不移除", { exact: true })).toBeVisible();
+  await expect(hidden.getByRole("checkbox")).toHaveCount(0);
+  await expect(signature.getByText("僅提醒", { exact: true })).toBeVisible();
+  await expect(invisible.getByRole("checkbox", { name: "刪除", exact: true })).toBeVisible();
+  await scan.getByRole("button", { name: "全部勾選淨化", exact: true }).click();
+  await expect(hidden.getByText(warning, { exact: true })).toBeVisible();
+  await expect(hidden.getByText("僅偵測，不移除", { exact: true })).toBeVisible();
+  await expect(hidden.getByRole("checkbox")).toHaveCount(0);
+  await expect(signature.getByText("僅提醒", { exact: true })).toBeVisible();
+  await expect(invisible.getByRole("checkbox", { name: "刪除", exact: true })).toBeChecked();
+});
+
 test("encrypted fixture: password unlocks the document", async ({ page }) => {
   await openSettled(page, NEW_URL);
   await page.setInputFiles('input[type=file][accept*="pdf"]', "fixtures/encrypted.pdf");
