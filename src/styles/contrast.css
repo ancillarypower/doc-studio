@@ -1,0 +1,25 @@
+/* Phase B #9: color-only overrides for the existing utility palette.
+   Unlayered rules intentionally outrank Tailwind's layered utilities. */
+main [class~="text-[#8A7C66]"],
+main [class~="text-[#B4A88F]"],
+main [class~="text-[#A99B7E]"] {
+  color: #6e6250;
+}
+
+/* Section opacity also faded instructions and still-focusable headings. Keep
+   pointer-events, disabled attributes and aria-disabled exactly as authored. */
+main section[data-section][class~="opacity-40"],
+main [data-section="s4-method"] > [class~="opacity-40"],
+main [data-section="s8-watermark"] [class~="pointer-events-none"][class~="opacity-40"] {
+  opacity: 1;
+}
+
+/* White-on-red default badges need a dark, not translucent-white, backing. */
+main button[class~="bg-[#BE3A2B]"] > [class~="bg-white/25"][class~="text-white"] {
+  background-color: #992e22;
+}
+
+main input::placeholder,
+main textarea::placeholder {
+  color: #6e6250;
+}

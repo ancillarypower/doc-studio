@@ -1,0 +1,23 @@
+/* Approved Phase B #9 reference palette, intentionally stored independently.
+   Do not import src/styles/contrast.css: future port changes must remain visible
+   to visual comparison rather than silently changing this baseline too. */
+main [class~="text-[#8A7C66]"],
+main [class~="text-[#B4A88F]"],
+main [class~="text-[#A99B7E]"] {
+  color: #6e6250;
+}
+
+main section[data-section][class~="opacity-40"],
+main [data-section="s4-method"] > [class~="opacity-40"],
+main [data-section="s8-watermark"] [class~="pointer-events-none"][class~="opacity-40"] {
+  opacity: 1;
+}
+
+main button[class~="bg-[#BE3A2B]"] > [class~="bg-white/25"][class~="text-white"] {
+  background-color: #992e22;
+}
+
+main input::placeholder,
+main textarea::placeholder {
+  color: #6e6250;
+}

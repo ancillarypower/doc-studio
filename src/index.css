@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/contrast.css";
 
 /* ---- Tailwind v3 parity (the artifact runtime used Tailwind 3.4) ----
    v4 changed a few defaults; these restore the v3 look so phase A renders like the original. */
