@@ -9,6 +9,7 @@ main [class~="text-[#A99B7E]"] {
 
 main section[data-section][class~="opacity-40"],
 main [data-section="s4-method"] > [class~="opacity-40"],
+main [data-section="s4-method"] [class~="pointer-events-none"][class~="opacity-40"],
 main [data-section="s8-watermark"] [class~="pointer-events-none"][class~="opacity-40"] {
   opacity: 1;
 }
