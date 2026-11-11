@@ -1,6 +1,6 @@
-// Builds the visual baseline: the artifact's original source (reference/artifact/src, only
-// data-section attributes added) bundled like the artifact runtime does it: esbuild 0.27.2,
-// React 18.2, and the compiled stylesheet captured from the runtime build (artifact.css).
+// Builds the visual baseline: the artifact's original source (reference/artifact/src),
+// with explicitly approved Phase B changes, bundled like the artifact runtime:
+// esbuild 0.27.2, React 18.2, captured artifact.css and independent contrast.css.
 // Output: reference/build/index.html (+ app.js), served by CI next to the new build.
 import { build } from "esbuild";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -49,6 +49,7 @@ await build({
   }],
 });
 const css = readFileSync(join(here, "artifact", "artifact.css"), "utf8");
+const contrast = readFileSync(join(here, "artifact", "contrast.css"), "utf8");
 writeFileSync(join(out, "index.html"), `<!doctype html>
 <html lang="en">
   <head>
@@ -57,6 +58,7 @@ writeFileSync(join(out, "index.html"), `<!doctype html>
     <title>印章工廠</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;900&amp;family=Noto+Sans+TC:wght@400;500;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" />
     <style>${css}</style>
+    <style>${contrast}</style>
   </head>
   <body>
     <div id="root"></div>
